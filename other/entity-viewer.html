@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Labyrinth Box · Entity Viewer</title>
+<!--
+  Entity viewer: preview any creature from ../entities/ without starting the game.
+  Open this file straight from disk (no server needed). After editing an entity file,
+  just reload the page: the selected entity is remembered in the URL (#id).
+
+  Keys:  ↑ ↓  previous / next entity     1 2 3 4  idle · rotate · wander · sprint
+         Space  attack pose              R  rebuild model      F  follow camera
+         B  bones                        G  grid               L  backdrop
+-->
+<style>
+:root {
+  --ink: #e8e3d3;
+  --dim: #a89f86;
+  --accent: #e9c46a;
+  --panel: rgba(14, 13, 10, 0.92);
+  --line: rgba(233, 196, 106, 0.25);
+  --bad: #e07a5f;
+  --good: #8fbf8f;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: #050403; color: var(--ink); font-family: var(--mono); font-size: 12px; overflow: hidden; }
+button, input { font: inherit; color: inherit; }
+#app { display: grid; grid-template-columns: 270px 1fr 310px; height: 100%; }
+
+/* ---- lists ---- */
+aside { background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+aside.right { border-right: 0; border-left: 1px solid var(--line); }
+.head { padding: 14px 14px 10px; border-bottom: 1px solid var(--line); }
+.head h1 { margin: 0 0 2px; font-size: 13px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--accent); font-weight: 600; }
+.head p { margin: 0; color: var(--dim); font-size: 11px; }
+#search { width: 100%; margin-top: 10px; padding: 7px 9px; background: rgba(255,255,255,0.05); border: 1px solid var(--line); border-radius: 4px; outline: none; }
+#search:focus { border-color: var(--accent); }
+#list { overflow-y: auto; padding: 6px 6px 16px; flex: 1; }
+.grp { margin: 12px 8px 4px; font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--accent); }
+.item { display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left; padding: 6px 8px; background: none; border: 1px solid transparent; border-radius: 4px; cursor: pointer; }
+.item:hover { background: rgba(255,255,255,0.05); }
+.item.on { background: rgba(233,196,106,0.12); border-color: var(--line); }
+.item b { font-weight: 600; font-size: 12px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item small { color: var(--dim); font-size: 10px; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); flex: none; align-self: center; }
+.dot.Hostile { background: var(--bad); } .dot.Lethal { background: #b5179e; } .dot.Passive { background: var(--good); }
+
+/* ---- stage ---- */
+main { position: relative; min-width: 0; }
+canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; outline: none; touch-action: none; cursor: grab; }
+canvas:active { cursor: grabbing; }
+.bar { position: absolute; left: 12px; right: 12px; top: 12px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; pointer-events: none; }
+.bar > * { pointer-events: auto; }
+.seg { display: flex; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; background: var(--panel); }
+.seg button { padding: 7px 13px; background: none; border: 0; border-right: 1px solid var(--line); cursor: pointer; color: var(--dim); }
+.seg button:last-child { border-right: 0; }
+.seg button:hover { color: var(--ink); background: rgba(255,255,255,0.05); }
+.seg button.on { background: var(--accent); color: #1a1710; font-weight: 600; }
+.btn { padding: 7px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 5px; cursor: pointer; color: var(--dim); }
+.btn:hover { color: var(--ink); border-color: var(--accent); }
+.btn.on { color: var(--accent); border-color: var(--accent); }
+.dock { position: absolute; left: 12px; right: 12px; bottom: 12px; display: flex; gap: 10px 16px; flex-wrap: wrap; align-items: center; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 9px 14px; }
+.dock label { display: flex; align-items: center; gap: 8px; color: var(--dim); white-space: nowrap; }
+.dock input[type=range] { width: 84px; accent-color: var(--accent); }
+.dock output { color: var(--ink); min-width: 38px; display: inline-block; }
+.hint { position: absolute; left: 14px; top: 56px; color: var(--dim); font-size: 11px; pointer-events: none; text-shadow: 0 1px 3px #000; }
+#readout { position: absolute; right: 14px; top: 56px; color: var(--dim); font-size: 11px; text-align: right; pointer-events: none; text-shadow: 0 1px 3px #000; }
+#err { display: none; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); max-width: 520px; padding: 16px 18px; background: rgba(40, 10, 8, 0.95); border: 1px solid var(--bad); border-radius: 6px; color: #ffd6cc; white-space: pre-wrap; }
+
+/* ---- info ---- */
+#info { overflow-y: auto; padding: 14px; flex: 1; }
+#info h2 { margin: 0; font-size: 18px; font-weight: 600; }
+#info .num { color: var(--accent); font-size: 11px; letter-spacing: 0.1em; margin: 2px 0 10px; }
+#info p { margin: 0 0 10px; color: #cfc8b4; line-height: 1.5; }
+#info h3 { margin: 16px 0 6px; font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--accent); font-weight: 600; }
+table { width: 100%; border-collapse: collapse; }
+td { padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
+td:first-child { color: var(--dim); }
+td:last-child { text-align: right; }
+ul { margin: 0; padding-left: 16px; color: #cfc8b4; line-height: 1.5; }
+.tag { display: inline-block; margin: 0 4px 4px 0; padding: 2px 7px; border: 1px solid var(--line); border-radius: 10px; color: var(--dim); font-size: 10px; }
+code { color: var(--accent); }
+.note { color: var(--dim); font-size: 11px; margin-top: 6px; }
+
+@media (max-width: 1100px) { #app { grid-template-columns: 220px 1fr; } aside.right { display: none; } }
+@media (max-width: 640px) { #app { grid-template-columns: 1fr; grid-template-rows: 38% 62%; } aside { border-right: 0; border-bottom: 1px solid var(--line); } .hint { display: none; } }
+</style>
+</head>
+<body>
+<div id="app">
+  <aside>
+    <div class="head">
+      <h1>Entity Viewer</h1>
+      <p><span id="count">0</span> entities · files in <code>entities/</code></p>
+      <input id="search" type="search" placeholder="Search…  (↑ ↓ to browse)" autocomplete="off" />
+    </div>
+    <div id="list"></div>
+  </aside>
+
+  <main>
+    <canvas id="c" tabindex="0"></canvas>
+    <div class="bar">
+      <div class="seg" id="modes">
+        <button data-mode="idle" title="1">Idle</button>
+        <button data-mode="rotate" title="2">Rotate</button>
+        <button data-mode="wander" title="3">Wander</button>
+        <button data-mode="sprint" title="4">Sprint</button>
+      </div>
+      <button class="btn" id="attack" title="Space">Attack</button>
+      <button class="btn" id="rebuild" title="R">Rebuild</button>
+      <button class="btn on" id="follow" title="F">Follow</button>
+      <button class="btn" id="bones" title="B">Bones</button>
+      <button class="btn on" id="grid" title="G">Grid</button>
+      <button class="btn" id="bg" title="L">Backdrop</button>
+    </div>
+    <div class="hint">drag · orbit &nbsp; right-drag · pan &nbsp; wheel · zoom</div>
+    <div id="readout"></div>
+    <div id="err"></div>
+    <div class="dock">
+      <label>Light <input id="light" type="range" min="0" max="2" step="0.01" value="0.9" /><output id="lightv">0.90</output></label>
+      <label>Time <input id="timescale" type="range" min="0" max="2" step="0.05" value="1" /><output id="timev">1.0×</output></label>
+      <label>Speed <input id="speed" type="range" min="0.25" max="3" step="0.05" value="1" /><output id="speedv">1.0×</output></label>
+      <label>Size <input id="scale" type="range" min="0.5" max="2" step="0.05" value="1" /><output id="scalev">1.0×</output></label>
+    </div>
+  </main>
+
+  <aside class="right">
+    <div class="head"><h1>Field guide</h1><p id="fileline">&nbsp;</p></div>
+    <div id="info"></div>
+  </aside>
+</div>
+
+<script>window.__mod = {};</script>
+<script src="../lib/three.js"></script>
+<script src="../lib/BufferGeometryUtils.js"></script>
+<script src="../lib/shaderpatch.js"></script>
+<script src="../lib/rng.js"></script>
+<script src="../entities/loader.js"></script>
+<script>
+(function () {
+'use strict';
+const M = window.__mod;
+const THREE = M['vendor/three/build/three.module.js'];
+const { installGlobalPatches, GLOBAL_UNIFORMS } = M['src/gfx/shaderpatch.js'];
+const { RNG } = M['src/core/rng.js'];
+const { setLight } = M['src/entities/rig.js'];
+const { buildModel } = M['src/entities/models.js'];
+const ED = M['src/entities/registry.js'].ENTITY_DEFS;
+const $ = (id) => document.getElementById(id);
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+
+// -------------------------------------------------------------------- renderer / scene
+const canvas = $('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+installGlobalPatches();
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(42, 1, 0.05, 900);
+const hemi = new THREE.HemisphereLight(0xdfe6ff, 0x3a3228, 0.9);
+const key = new THREE.DirectionalLight(0xfff0d8, 2.2);
+key.position.set(4, 8, 5);
+key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048);
+Object.assign(key.shadow.camera, { left: -14, right: 14, top: 14, bottom: -14, near: 0.5, far: 40 });
+key.shadow.bias = -0.0004;
+const rim = new THREE.DirectionalLight(0x8fa8ff, 0.8);
+rim.position.set(-5, 3, -6);
+scene.add(hemi, key, key.target, rim);
+
+const BACKDROPS = [['#1b1a17', '#2a2824'], ['#6f6b62', '#4d4a43'], ['#0a0907', '#171512']];
+let backdrop = 0;
+const floor = new THREE.Mesh(new THREE.CircleGeometry(400, 64).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x2a2824, roughness: 0.95 }));
+floor.receiveShadow = true;
+scene.add(floor);
+const grid = new THREE.GridHelper(40, 40, 0xe9c46a, 0x6b6451);
+grid.material.transparent = true; grid.material.opacity = 0.28; grid.position.y = 0.002;
+scene.add(grid);
+const ring = new THREE.Mesh(new THREE.RingGeometry(0.98, 1.0, 96).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xe9c46a, transparent: true, opacity: 0.35 }));
+ring.position.y = 0.004; scene.add(ring);
+function applyBackdrop() {
+  const [bg, fl] = BACKDROPS[backdrop];
+  scene.background = new THREE.Color(bg);
+  scene.fog = new THREE.Fog(bg, 22, 58);
+  floor.material.color.set(fl);
+}
+applyBackdrop();
+
+// -------------------------------------------------------------------- orbit camera
+let lightReach = 10;
+const cam = { target: new THREE.Vector3(0, 1, 0), yaw: 0.6, pitch: 0.28, dist: 6, wantDist: 6 };
+function placeCamera() {
+  const cp = Math.cos(cam.pitch);
+  camera.position.set(cam.target.x + Math.sin(cam.yaw) * cp * cam.dist, cam.target.y + Math.sin(cam.pitch) * cam.dist, cam.target.z + Math.cos(cam.yaw) * cp * cam.dist);
+  camera.lookAt(cam.target);
+}
+const ptr = new Map();
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+canvas.addEventListener('pointerdown', (e) => { canvas.setPointerCapture(e.pointerId); ptr.set(e.pointerId, { x: e.clientX, y: e.clientY, b: e.button, shift: e.shiftKey }); canvas.focus(); });
+canvas.addEventListener('pointerup', (e) => ptr.delete(e.pointerId));
+canvas.addEventListener('pointercancel', (e) => ptr.delete(e.pointerId));
+canvas.addEventListener('pointermove', (e) => {
+  const p = ptr.get(e.pointerId); if (!p) return;
+  const dx = e.clientX - p.x, dy = e.clientY - p.y; p.x = e.clientX; p.y = e.clientY;
+  if (p.b === 2 || p.b === 1 || p.shift) {
+    // pan in the camera plane (turns Follow off, you are steering by hand)
+    const k = cam.dist * 0.0016;
+    const right = new THREE.Vector3(), up = new THREE.Vector3();
+    camera.matrixWorld.extractBasis(right, up, new THREE.Vector3());
+    cam.target.addScaledVector(right, -dx * k).addScaledVector(up, dy * k);
+    if (follow) setFollow(false);
+  } else {
+    cam.yaw -= dx * 0.0065;
+    cam.pitch = clamp(cam.pitch + dy * 0.0065, -0.2, 1.5);
+  }
+});
+canvas.addEventListener('wheel', (e) => { e.preventDefault(); cam.wantDist = clamp(cam.wantDist * Math.exp(e.deltaY * 0.0012), 0.6, 80); }, { passive: false });
+canvas.addEventListener('dblclick', () => { frame(); setFollow(true); });
+
+// -------------------------------------------------------------------- state
+let mode = 'wander';
+let follow = true;
+let current = null;            // { id, def, model, root, pos, yaw, st, ... }
+let skeleton = null;
+let attackT = 0;
+let seed = 1;
+let unit = 1;                   // user "Size" slider
+const sim = { timeScale: 1, speedMul: 1, light: 0.9 };
+const ids = Object.keys(ED);
+
+function walkSpeed(d) { return d.speed > 0 ? d.speed : d.chase > 0 ? d.chase * 0.35 : 0.8; }
+function runSpeed(d) { return d.chase > 0 ? d.chase : Math.max(walkSpeed(d) * 2.4, 2.5); }
+
+function disposeCurrent() {
+  if (!current) return;
+  scene.remove(current.holder);
+  if (skeleton) { scene.remove(skeleton); skeleton.dispose && skeleton.dispose(); skeleton = null; }
+  current.root.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
+  current = null;
+}
+
+function frame() {
+  if (!current) return;
+  const m = current.model;
+  const h = Math.max(m.height || 1.8, 0.5) * unit, r = Math.max(m.radius || 0.4, 0.2) * unit;
+  const big = m.worldSpace ? 6 : Math.max(h, r * 2.2);
+  cam.wantDist = clamp(big * 2.6 + 1.2, 2.5, 60);
+  cam.dist = cam.wantDist;
+  cam.target.set(current.pos.x, h * 0.5, current.pos.z);
+  // big creatures (the 17 m Colossus) need a bigger shadow volume
+  lightReach = Math.max(10, big * 1.6);
+  const sc = key.shadow.camera;
+  sc.left = -lightReach; sc.right = lightReach; sc.top = lightReach; sc.bottom = -lightReach; sc.far = lightReach * 5; sc.updateProjectionMatrix();
+}
+
+function applyLight() {
+  if (!current) return;
+  const v = sim.light;
+  setLight(current.model.mats, 0.34 * v, 0.34 * v, 0.34 * v);
+  hemi.intensity = 0.9 * v; key.intensity = 2.2 * v; rim.intensity = 0.8 * v;
+}
+
+function show(id, opts = {}) {
+  if (!ED[id]) return;
+  disposeCurrent();
+  const def = ED[id];
+  $('err').style.display = 'none';
+  let model;
+  try {
+    seed = opts.reseed ? (seed + 1) : (opts.seed || 1);
+    model = buildModel(id, new RNG(seed * 7919 + 13));
+  } catch (e) {
+    console.error(e);
+    const box = $('err');
+    box.textContent = 'Could not build “' + id + '”\n\n' + (e && e.stack ? e.stack : e) + '\n\nFile: entities/' + id + '.js';
+    box.style.display = 'block';
+    current = null;
+    updateList(id); updateInfo(id, null);
+    return;
+  }
+  // some entities are driven to transparent by game logic; preview them solid
+  for (const mt of model.mats) { if (def.whisper || def.camo || def.fade) { mt.transparent = true; mt.opacity = 1; } }
+  model.root.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = false; o.frustumCulled = false; } });
+  current = {
+    id, def, model, root: model.root, pos: new THREE.Vector3(0, 0, 0), yaw: 0, speed: 0,
+    st: { speed: 0, phase: Math.random() * 6, t: Math.random() * 10, look: 0, attack: 0, chasing: false, crawl: false, ceiling: 3.2, prox: 0 },
+    goal: null, idle: 0.5,
+  };
+  // a wrapper group carries position / heading / the Size slider, so the model keeps full control of its own root
+  current.holder = new THREE.Group();
+  current.holder.add(model.root);
+  scene.add(current.holder);
+  if (model.worldSpace) current.st.head = { x: 0, y: 0, z: 0 };
+  current.holder.scale.setScalar(unit);
+  // warm the pose so bodies that trail (worm, coil) start laid out
+  prime();
+  applyLight();
+  if (bonesOn) toggleBones(true);
+  frame();
+  updateList(id); updateInfo(id, model);
+  try { history.replaceState(null, '', '#' + id); } catch (e) { location.hash = id; }
+}
+
+function prime() {
+  const c = current; if (!c) return;
+  if (c.model.worldSpace) {
+    for (let i = 70; i >= 0; i--) { c.st.head = { x: -i * 0.15, y: headY(), z: Math.sin(i * 0.3) * 0.3 }; c.st.speed = 1; c.model.animate(c.st, 0.016); }
+    c.st.head = { x: 0, y: headY(), z: 0 }; c.st.speed = 0;
+  } else {
+    for (let i = 0; i < 6; i++) { try { c.model.animate(c.st, 0.016); } catch (e) { /* reported on first real frame */ break; } }
+  }
+}
+function headY() { return current ? Math.max(0.1, (current.model.radius || 0.4)) : 0.4; }   // model units
+
+// -------------------------------------------------------------------- modes / movement
+function setMode(m) {
+  mode = m;
+  for (const b of document.querySelectorAll('#modes button')) b.classList.toggle('on', b.dataset.mode === m);
+  if (current) { current.goal = null; current.idle = 0.3; if (m === 'idle' || m === 'rotate') { current.pos.set(0, 0, 0); current.yaw = 0; current.root.rotation.y = 0; } }
+  if (m === 'wander' || m === 'sprint') { setFollow(true); }
+  if ((m === 'idle' || m === 'rotate') && current) { cam.target.set(0, (current.model.height || 1.8) * unit * 0.5, 0); }
+}
+function setFollow(v) { follow = v; $('follow').classList.toggle('on', v); }
+
+function pickGoal(c, R) {
+  const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * R;
+  c.goal = new THREE.Vector3(Math.cos(a) * r, 0, Math.sin(a) * r);
+}
+
+function step(dt) {
+  const c = current; if (!c) return;
+  const d = c.def, m = c.model, st = c.st;
+  const sprint = mode === 'sprint';
+  const moving = mode === 'wander' || mode === 'sprint';
+  const target = moving && !d.static ? (sprint ? runSpeed(d) : walkSpeed(d)) * sim.speedMul : 0;
+  let want = target;
+  if (moving) {
+    const R = (sprint ? 11 : 7) * Math.max(1, ((m.height || 1.8) * unit) / 3);   // bigger arena for giants
+    if (c.idle > 0) { c.idle -= dt; want = 0; }
+    else {
+      if (!c.goal || Math.hypot(c.goal.x - c.pos.x, c.goal.z - c.pos.z) < 0.7 + c.speed * 0.15) {
+        pickGoal(c, R);
+        if (!sprint && Math.random() < 0.35) c.idle = 0.8 + Math.random() * 1.8; // a pause, as in the game
+      }
+      const dx = c.goal.x - c.pos.x, dz = c.goal.z - c.pos.z;
+      const want_yaw = Math.atan2(dx, dz);
+      let da = want_yaw - c.yaw; da = Math.atan2(Math.sin(da), Math.cos(da));
+      const turn = (sprint ? 3.4 : 2.0) * dt;
+      c.yaw += clamp(da, -turn, turn);
+      if (Math.abs(da) > 1.0) want *= 0.35;           // slow into sharp turns
+    }
+    // keep inside the arena even if the goal drifted
+    if (Math.hypot(c.pos.x, c.pos.z) > R + 3) pickGoal(c, 2);
+  }
+  c.speed = lerp(c.speed, want, Math.min(1, dt * 4.5));
+  if (moving) {
+    c.pos.x += Math.sin(c.yaw) * c.speed * dt;
+    c.pos.z += Math.cos(c.yaw) * c.speed * dt;
+  }
+  if (mode === 'rotate') c.yaw += dt * 0.7;
+
+  // ---- pose state, same fields the game feeds a model
+  attackT = Math.max(0, attackT - dt);
+  st.speed = c.speed / Math.max(unit, 0.01);
+  st.chasing = sprint && c.speed > 0.2;
+  st.crawl = id_is('wretch') && sprint;
+  st.attack = attackT > 0 ? attackT / 0.6 : 0;
+  st.look = lerp(st.look, 0, Math.min(1, dt * 3));
+  if (m.worldSpace) {
+    st.head = { x: c.pos.x / unit, y: headY(), z: c.pos.z / unit };
+    c.holder.position.set(0, 0, 0); c.holder.rotation.y = 0;
+  } else {
+    c.holder.position.set(c.pos.x, 0, c.pos.z);
+    c.holder.rotation.y = c.yaw;
+  }
+  c.holder.scale.setScalar(unit);
+  try { m.animate(st, dt); } catch (e) { reportRuntime(e); }
+}
+function id_is(x) { return current && current.id === x; }
+
+let runtimeReported = false;
+function reportRuntime(e) {
+  if (runtimeReported) return;
+  runtimeReported = true;
+  console.error(e);
+  const box = $('err');
+  box.textContent = 'animate() threw in “' + (current ? current.id : '?') + '”\n\n' + (e && e.stack ? e.stack : e) + '\n\nFile: entities/' + (current ? current.id : '') + '.js';
+  box.style.display = 'block';
+  setTimeout(() => { box.style.display = 'none'; }, 7000);
+}
+
+// -------------------------------------------------------------------- UI
+const bonesBtn = $('bones'); let bonesOn = false;
+function toggleBones(v) {
+  bonesOn = v; bonesBtn.classList.toggle('on', v);
+  if (skeleton) { scene.remove(skeleton); skeleton = null; }
+  if (v && current) {
+    try { skeleton = new THREE.SkeletonHelper(current.root); skeleton.material.linewidth = 2; skeleton.material.depthTest = false; skeleton.material.color && skeleton.material.color.set(0xe9c46a); skeleton.renderOrder = 999; scene.add(skeleton); } catch (e) { skeleton = null; }
+  }
+}
+
+function buildList() {
+  const list = $('list'); list.textContent = '';
+  const groups = [['Core entities', ids.filter((i) => !ED[i].phobia)], ['Phobia wing', ids.filter((i) => ED[i].phobia)]];
+  for (const [title, arr] of groups) {
+    const h = document.createElement('div'); h.className = 'grp'; h.textContent = title; h.dataset.grp = '1'; list.appendChild(h);
+    for (const id of arr) {
+      const d = ED[id];
+      const b = document.createElement('button'); b.className = 'item'; b.dataset.id = id;
+      b.innerHTML = '<span class="dot ' + (d.cls || '').split(' ')[0] + '"></span><b></b><small></small>';
+      b.querySelector('b').textContent = d.name;
+      b.querySelector('small').textContent = id;
+      b.onclick = () => show(id);
+      list.appendChild(b);
+    }
+  }
+  $('count').textContent = ids.length;
+}
+function updateList(id) {
+  for (const b of document.querySelectorAll('.item')) b.classList.toggle('on', b.dataset.id === id);
+  const on = document.querySelector('.item.on'); if (on) on.scrollIntoView({ block: 'nearest' });
+}
+function filterList() {
+  const q = $('search').value.trim().toLowerCase();
+  let anyInGroup = false; let lastHead = null;
+  const nodes = [...$('list').children];
+  for (const n of nodes) {
+    if (n.dataset.grp) { if (lastHead) lastHead.style.display = anyInGroup ? '' : 'none'; lastHead = n; anyInGroup = false; continue; }
+    const d = ED[n.dataset.id];
+    const hit = !q || (n.dataset.id + ' ' + d.name + ' ' + (d.cls || '') + ' ' + (d.num || '')).toLowerCase().includes(q);
+    n.style.display = hit ? '' : 'none'; if (hit) anyInGroup = true;
+  }
+  if (lastHead) lastHead.style.display = anyInGroup ? '' : 'none';
+}
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function updateInfo(id, model) {
+  const d = ED[id];
+  $('fileline').innerHTML = '<code>entities/' + esc(id) + '.js</code>';
+  const flags = ['rare', 'fly', 'noclip', 'burrow', 'statue', 'static', 'passive', 'darkOnly', 'xray', 'phobia'].filter((f) => d[f]);
+  const walk = d.speed > 0 ? d.speed.toFixed(2) + ' m/s' : '— (stationary)';
+  const run = d.chase > 0 ? d.chase.toFixed(2) + ' m/s' : '— (never chases)';
+  const demoNote = (d.speed <= 0 || d.chase <= 0) ? '<div class="note">The game never moves this entity at that gait; the viewer uses demo speeds of ' + walkSpeed(d).toFixed(1) + ' / ' + runSpeed(d).toFixed(1) + ' m/s.</div>' : '';
+  $('info').innerHTML =
+    '<h2>' + esc(d.name) + '</h2><div class="num">' + esc(d.num || '') + (d.cls ? ' · ' + esc(d.cls) : '') + '</div>' +
+    (flags.length ? '<div>' + flags.map((f) => '<span class="tag">' + f + '</span>').join('') + '</div>' : '') +
+    (d.desc ? '<p>' + esc(d.desc) + '</p>' : '') +
+    '<h3>Movement</h3><table>' +
+    '<tr><td>Wander speed</td><td>' + walk + '</td></tr>' +
+    '<tr><td>Sprint speed</td><td>' + run + '</td></tr>' +
+    '<tr><td>Detect range</td><td>' + (d.detect >= 900 ? 'unlimited' : (d.detect || 0) + ' m') + '</td></tr>' +
+    '<tr><td>Damage / reach</td><td>' + (d.dmg || 0) + ' / ' + (d.reach || 0) + ' m</td></tr></table>' + demoNote +
+    '<h3>Model</h3><table>' +
+    '<tr><td>Size (guide)</td><td>' + esc(d.size || '') + '</td></tr>' +
+    (model ? '<tr><td>Rig kind</td><td>' + esc(model.kind) + '</td></tr>' +
+    '<tr><td>Height × radius</td><td>' + (model.height || 0).toFixed(2) + ' × ' + (model.radius || 0).toFixed(2) + ' m</td></tr>' +
+    '<tr><td>Materials</td><td>' + (model.mats ? model.mats.length : 0) + ' + ' + (model.glows ? model.glows.length : 0) + ' glow</td></tr>' : '') + '</table>' +
+    (d.notes ? '<h3>Behaviour</h3><p>' + esc(d.notes) + '</p>' : '') +
+    (d.tips && d.tips.length ? '<h3>Survival tips</h3><ul>' + d.tips.map((t) => '<li>' + esc(t) + '</li>').join('') + '</ul>' : '');
+}
+
+$('modes').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) setMode(b.dataset.mode); });
+$('attack').onclick = () => { attackT = 0.6; };
+$('rebuild').onclick = () => { if (current) show(current.id, { reseed: true }); };
+$('follow').onclick = () => { setFollow(!follow); };
+bonesBtn.onclick = () => toggleBones(!bonesOn);
+$('grid').onclick = () => { grid.visible = !grid.visible; ring.visible = grid.visible; $('grid').classList.toggle('on', grid.visible); };
+$('bg').onclick = () => { backdrop = (backdrop + 1) % BACKDROPS.length; applyBackdrop(); };
+$('search').addEventListener('input', filterList);
+const bind = (id, outId, fmt, apply) => { const el = $(id); const f = () => { const v = parseFloat(el.value); $(outId).textContent = fmt(v); apply(v); }; el.addEventListener('input', f); f(); };
+bind('light', 'lightv', (v) => v.toFixed(2), (v) => { sim.light = v; applyLight(); });
+bind('timescale', 'timev', (v) => v.toFixed(1) + '×', (v) => { sim.timeScale = v; });
+bind('speed', 'speedv', (v) => v.toFixed(1) + '×', (v) => { sim.speedMul = v; });
+bind('scale', 'scalev', (v) => v.toFixed(1) + '×', (v) => { unit = v; if (current) { current.holder.scale.setScalar(v); frame(); } });
+
+function move(dir) {
+  const vis = [...document.querySelectorAll('.item')].filter((n) => n.style.display !== 'none');
+  if (!vis.length) return;
+  let i = vis.findIndex((n) => n.classList.contains('on'));
+  i = (i + dir + vis.length) % vis.length;
+  show(vis[i].dataset.id);
+}
+window.addEventListener('keydown', (e) => {
+  if (e.target && e.target.id === 'search') { if (e.key === 'Escape') e.target.blur(); if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); move(e.key === 'ArrowDown' ? 1 : -1); } return; }
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const k = e.key.toLowerCase();
+  if (k === 'arrowdown' || k === 'arrowright') { move(1); e.preventDefault(); }
+  else if (k === 'arrowup' || k === 'arrowleft') { move(-1); e.preventDefault(); }
+  else if (k === '1') setMode('idle'); else if (k === '2') setMode('rotate'); else if (k === '3') setMode('wander'); else if (k === '4') setMode('sprint');
+  else if (k === ' ') { attackT = 0.6; e.preventDefault(); }
+  else if (k === 'r') $('rebuild').click();
+  else if (k === 'f') setFollow(!follow);
+  else if (k === 'b') toggleBones(!bonesOn);
+  else if (k === 'g') $('grid').click();
+  else if (k === 'l') $('bg').click();
+  else if (k === '/') { $('search').focus(); e.preventDefault(); }
+});
+
+// -------------------------------------------------------------------- loop
+function resize() {
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (canvas.width !== Math.floor(w * renderer.getPixelRatio()) || canvas.height !== Math.floor(h * renderer.getPixelRatio())) {
+    renderer.setSize(w, h, false); camera.aspect = w / Math.max(1, h); camera.updateProjectionMatrix();
+  }
+}
+let last = performance.now(), fpsT = 0, frames = 0;
+function loop(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  resize();
+  GLOBAL_UNIFORMS.uTime.value += dt;
+  step(dt * sim.timeScale);
+  // camera: follow the entity, ease zoom
+  if (current && follow && (mode === 'wander' || mode === 'sprint')) {
+    const hh = (current.model.height || 1.8) * unit * 0.5;
+    cam.target.x = lerp(cam.target.x, current.pos.x, Math.min(1, dt * 5));
+    cam.target.z = lerp(cam.target.z, current.pos.z, Math.min(1, dt * 5));
+    cam.target.y = lerp(cam.target.y, hh, Math.min(1, dt * 5));
+  }
+  cam.dist = lerp(cam.dist, cam.wantDist, Math.min(1, dt * 10));
+  placeCamera();
+  const lr = lightReach / 10;
+  scene.fog.near = cam.dist * 1.2 + 8; scene.fog.far = cam.dist * 3.5 + 40;
+  key.position.set(cam.target.x + 4 * lr, 8 * lr, cam.target.z + 5 * lr); key.target.position.copy(cam.target); key.target.updateMatrixWorld();
+  floor.position.set(cam.target.x, 0, cam.target.z);
+  grid.position.set(Math.round(cam.target.x / 1) * 1, 0.002, Math.round(cam.target.z / 1) * 1);
+  renderer.render(scene, camera);
+  frames++; fpsT += dt;
+  if (fpsT > 0.5) {
+    const sp = current ? current.speed : 0;
+    $('readout').textContent = (frames / fpsT).toFixed(0) + ' fps · ' + (current ? mode + ' · ' + sp.toFixed(2) + ' m/s' : '');
+    fpsT = 0; frames = 0;
+  }
+  requestAnimationFrame(loop);
+}
+
+buildList();
+setMode('wander');
+const startId = (location.hash || '').slice(1);
+show(ED[startId] ? startId : ids[0]);
+requestAnimationFrame(loop);
+window.viewer = { show, setMode, get current() { return current; }, ED, cam, scene, camera, renderer };
+})();
+</script>
+</body>
+</html>
