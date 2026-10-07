@@ -12008,7 +12008,7 @@ class Goal {
       this.box(wood, -0.72, 0.76, 0, 0.72, 0.8, 0.3);
       P.view = this.add(xf(new THREE.PlaneGeometry(1.16, 1.36), { y: 1.56, z: 0.02 }), glowMat('#ffffff', { map: viewTex(this.opts && this.opts.view), fog: false }));
       P.view.material.color.setRGB(0.75, 0.75, 0.75);
-    } else if (t === 'slide' || t === 'stairs') {
+    } else if (t === 'slide' || t === 'stairs' || t === 'stairshaft') {
       this.buildStructure(t);
     } else if (t === 'musicbox') {
       this.add(xf(new THREE.CylinderGeometry(0.04, 0.05, 0.75, 10), { y: 0.375 }), 'wood_dark');
@@ -19160,7 +19160,10 @@ class UI {
     const list = this.root.levelList;
     list.innerHTML = '';
     if (!save.isInstalled(this.pack)) this.pack = 'main';
-    const inPack = LEVELS.filter((l) => (l.track || 'main') === this.pack);
+    let inPack = LEVELS.filter((l) => (l.track || 'main') === this.pack);
+    // an empty pack (a folder with no level files yet) must not take the menu down with it
+    if (!inPack.length && this.pack !== 'main') { this.pack = 'main'; inPack = LEVELS.filter((l) => (l.track || 'main') === 'main'); }
+    if (!inPack.length) inPack = LEVELS.slice();
     const cur = LEVELS.find((l) => l.id === this.selected);
     if (!cur || (cur.track || 'main') !== this.pack) this.selected = (inPack.find((l) => l.id === this.sel[this.pack]) || inPack[0]).id;
     // tabs
@@ -21370,6 +21373,12 @@ class Game {
 function boot() {
   const canvas = document.getElementById('game');
   try {
+    // Without levels there is no game to build: say so plainly instead of
+    // failing somewhere inside the level selector.
+    if (!LEVELS.length) {
+      throw new Error('no levels were loaded. Every level is a file in the levels/ folder, which has to sit ' +
+        'next to index.html; levels/packs.js lists them. See levels/README.md.');
+    }
     window.game = new Game(canvas);
     window.__levels = LEVELS;
   } catch (err) {

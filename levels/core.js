@@ -69,18 +69,30 @@
     if (window.console && console.warn) console.warn('[levels] ' + msg);
   }
 
+  /** A red note in the corner of the page, so a missing file is visible without the console. */
+  function showError(text) {
+    function put() {
+      var box = document.getElementById('level-load-error');
+      if (!box) {
+        box = document.createElement('div');
+        box.id = 'level-load-error';
+        box.style.cssText = 'position:fixed;left:12px;bottom:12px;z-index:99999;max-width:520px;padding:10px 12px;' +
+          'font:12px/1.5 monospace;color:#ffd7d7;background:rgba(30,6,6,.94);border:1px solid #7a2a2a;border-radius:6px;' +
+          'box-shadow:0 6px 20px rgba(0,0,0,.5)';
+        (document.body || document.documentElement).appendChild(box);
+      }
+      box.textContent = text;
+    }
+    if (document.body) put();
+    else if (document.addEventListener) document.addEventListener('DOMContentLoaded', put);
+  }
+
   /** A <script> tag the loader wrote could not be found on disk. */
   function missingFile(path) {
     missing.push(path);
     warn('could not load ' + path + ' - is the file name listed in levels/packs.js spelled exactly right?');
-    if (document.getElementById('level-load-error')) return;
-    var box = document.createElement('div');
-    box.id = 'level-load-error';
-    box.style.cssText = 'position:fixed;left:12px;bottom:12px;z-index:99999;max-width:520px;padding:10px 12px;' +
-      'font:12px/1.5 monospace;color:#ffd7d7;background:rgba(30,6,6,.94);border:1px solid #7a2a2a;border-radius:6px;' +
-      'box-shadow:0 6px 20px rgba(0,0,0,.5)';
-    box.textContent = 'Level pack file missing: ' + path + ' (see the browser console for the full list)';
-    (document.body || document.documentElement).appendChild(box);
+    showError('Level file missing: ' + (missing.length > 1 ? missing.length + ' files, first is ' + missing[0] : path) +
+      ' (see the browser console for the full list)');
   }
 
   /** Every pack, its folder and the levels that registered into it. */
@@ -103,6 +115,8 @@
     find: find,
     stats: stats,
     missingFile: missingFile,
+    showError: showError,
+    loaded: false,
     version: 1,
   };
 })();
