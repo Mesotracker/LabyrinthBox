@@ -12163,7 +12163,10 @@ class Goal {
       const x0 = dir < 0 ? -half : spine, x1 = dir < 0 ? -spine : half;
       const base = k * R;
       for (let i = 0; i < n; i++) {
-        const a = (dir < 0 ? zEnd : -zEnd) - dir * i * run, b = (dir < 0 ? zEnd : -zEnd) - dir * (i + 1) * run;
+        // a flight starts at its own end of the well and runs to the other one:
+        // dir -1 walks from +zEnd to -zEnd, dir +1 back again (the sign has to
+        // follow dir, or the steps are built outside the shaft).
+        const a = (dir < 0 ? zEnd : -zEnd) + dir * i * run, b = (dir < 0 ? zEnd : -zEnd) + dir * (i + 1) * run;
         const za = Math.min(a, b), zb = Math.max(a, b), top = base + (i + 1) * riser;
         this.box('concrete', x0, base - 0.32, za, x1, top, zb);
         this.collider(x0, base - 0.32, za, x1, top, zb);
