@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Labyrinth Box - Entity Studio</title>
+<style>
+  :root { --bg: #14130f; --panel: #1d1b16; --line: #33302a; --ink: #e8e2d4; --dim: #a29b8b; --gold: #e9c46a; --good: #7fd18a; --bad: #e2705e; --in: #24211b; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 system-ui, "Segoe UI", sans-serif; }
+  header { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; padding: 12px 16px; background: #191712; border-bottom: 1px solid var(--line); }
+  header h1 { margin: 0; font-size: 16px; letter-spacing: .06em; }
+  header .sub { color: var(--dim); font-size: 12px; }
+  main { display: grid; grid-template-columns: minmax(430px, 1fr) minmax(400px, 44%); gap: 16px; padding: 16px; align-items: start; }
+  @media (max-width: 1020px) { main { grid-template-columns: 1fr; } }
+  section, aside > div { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--gold); margin: 0 0 10px; }
+  h3 { font-size: 12px; letter-spacing: .05em; color: var(--dim); margin: 14px 0 6px; text-transform: uppercase; }
+  label { display: block; font-size: 12px; color: var(--dim); margin-top: 8px; }
+  input[type=text], input[type=number], select, textarea { width: 100%; background: var(--in); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font: 13px/1.4 ui-monospace, Consolas, monospace; }
+  textarea { min-height: 54px; resize: vertical; }
+  input[type=color] { background: var(--in); border: 1px solid var(--line); border-radius: 6px; height: 30px; width: 100%; padding: 2px; }
+  input[type=range] { width: 100%; }
+  button { background: #2c2922; color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font-size: 12px; cursor: pointer; }
+  button:hover { border-color: var(--gold); color: var(--gold); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; }
+  .row > * { flex: 1 1 120px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
+  .chk { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink); margin-top: 10px; }
+  .chk input { width: auto; }
+  .hint { color: var(--dim); font-size: 12px; margin: 6px 0 0; }
+  .small { font-size: 11px; color: var(--dim); }
+  .warn { color: var(--bad); font-size: 12px; margin: 6px 0 0; }
+  .ok { color: var(--good); font-size: 12px; margin: 6px 0 0; }
+  pre { background: #100f0c; border: 1px solid var(--line); border-radius: 8px; padding: 10px; overflow: auto; max-height: 42vh; font: 12px/1.5 ui-monospace, Consolas, monospace; white-space: pre; }
+  code { background: #100f0c; border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; font: 12px ui-monospace, Consolas, monospace; }
+  canvas { width: 100%; height: 340px; display: block; background: #0d0c0a; border: 1px solid var(--line); border-radius: 8px; cursor: grab; }
+  .steps ol { margin: 0; padding-left: 20px; font-size: 13px; }
+  .steps li { margin-bottom: 6px; }
+  .preset { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+  .preset button { flex: 1 1 132px; }
+  .badge { font: 11px ui-monospace, monospace; color: var(--gold); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>LABYRINTH BOX &middot; ENTITY STUDIO</h1>
+  <span class="sub">build a creature with sliders and presets - the preview is live, the file writes itself</span>
+</header>
+
+<main>
+<div>
+  <section>
+    <h2>Start from a preset</h2>
+    <div class="preset" id="presets"></div>
+    <p class="hint">A preset fills in the whole creature. Change anything you like afterwards - the preview and the file follow along.</p>
+  </section>
+
+  <section>
+    <h2>1 &middot; The body</h2>
+    <div class="grid2">
+      <div><label>Stands like</label><select id="kind">
+        <option value="biped">a person (two legs)</option>
+        <option value="quad">a beast on all fours</option>
+      </select></div>
+      <div><label>Height in metres</label><input type="number" id="height" step="0.05" min="0.6" max="4" value="1.8"></div>
+      <div><label>Build <span class="small">slim &rarr; broad</span></label><input type="range" id="build" min="-1" max="1" step="0.05" value="0"></div>
+      <div><label>Head size <span class="small">0.6 &rarr; 1.6</span></label><input type="range" id="head" min="0.6" max="1.6" step="0.02" value="1"></div>
+      <div><label>Limb length <span class="small">0.8 &rarr; 1.25</span></label><input type="range" id="limbs" min="0.8" max="1.25" step="0.01" value="1"></div>
+      <div><label>Stride <span class="small">how big the walk is</span></label><input type="range" id="stride" min="0.8" max="2.2" step="0.05" value="1.2"></div>
+    </div>
+    <div class="row" style="margin-top:4px">
+      <label class="chk" style="flex:1 1 130px"><input type="checkbox" id="clothes" checked><span>wears clothes</span></label>
+      <label class="chk" style="flex:1 1 130px"><input type="checkbox" id="claws"><span>claws</span></label>
+      <div style="flex:1 1 130px"><label>Horns <span class="small">0 to 4</span></label><input type="number" id="horns" min="0" max="4" value="0"></div>
+      <div style="flex:1 1 130px"><label>Extra eyes <span class="small">0 to 6</span></label><input type="number" id="eyes" min="0" max="6" value="0"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>2 &middot; Skin and clothes</h2>
+    <div class="grid2">
+      <div><label>Skin colour</label><input type="color" id="skinbase" value="#c9a68a"></div>
+      <div><label>Skin shadow (the low spots)</label><input type="color" id="skindark" value="#6a4a3a"></div>
+      <div><label>Skin highlight (the high spots)</label><input type="color" id="skinlight" value="#f0d8c8"></div>
+      <div><label>Veins <span class="small">0 to 1</span></label><input type="range" id="veins" min="0" max="1" step="0.05" value="0.15"></div>
+      <div><label>Mottling <span class="small">blotches, 0 to 1</span></label><input type="range" id="mottle" min="0" max="1" step="0.05" value="0.3"></div>
+      <div><label>Wetness <span class="small">0 dry &rarr; 1 glossy</span></label><input type="range" id="rough" min="0" max="1" step="0.05" value="0.6"></div>
+      <div><label>Top colour</label><input type="color" id="top" value="#4a5a78"></div>
+      <div><label>Bottom colour</label><input type="color" id="bottom" value="#23252b"></div>
+      <div><label>Shoes / feet colour</label><input type="color" id="shoes" value="#1a1714"></div>
+      <div><label>Stains and wear <span class="small">0 to 1</span></label><input type="range" id="stains" min="0" max="1" step="0.05" value="0.3"></div>
+      <div><label>Eye colour</label><input type="color" id="eyecolor" value="#1b130d"></div>
+      <div><label>Eye glow colour</label><input type="color" id="eyeglow" value="#ff6a3a"></div>
+    </div>
+    <label class="chk"><input type="checkbox" id="gloweyes"><span>the eyes give off light (it can be seen in the dark)</span></label>
+  </section>
+
+  <section>
+    <h2>3 &middot; What it does</h2>
+    <div class="grid2">
+      <div><label>Name in the field guide</label><input type="text" id="name" value="Thing In The Hall"></div>
+      <div><label>Entity id <span class="small">short and unique: hall-thing</span></label><input type="text" id="id" value="hall-thing"></div>
+      <div><label>Field-guide number</label><input type="text" id="num" value="Entity 88"></div>
+      <div><label>Class</label><select id="cls"></select></div>
+      <div><label>Size line</label><input type="text" id="size" value="1.8 m"></div>
+      <div><label>Walk speed (m/s)</label><input type="number" id="speed" step="0.1" min="0" value="1"></div>
+      <div><label>Chase speed <span class="small">0 = never chases</span></label><input type="number" id="chase" step="0.1" min="0" value="3.6"></div>
+      <div><label>Sees you at (m)</label><input type="number" id="detect" step="0.5" min="0" value="7"></div>
+      <div><label>Damage per hit</label><input type="number" id="dmg" step="1" min="0" value="15"></div>
+      <div><label>Reach (m)</label><input type="number" id="reach" step="0.05" min="0" value="1.3"></div>
+      <div><label>Seconds between hits</label><input type="number" id="cd" step="0.1" min="0.1" value="1"></div>
+      <div><label>Remembers you for (s)</label><input type="number" id="memory" step="1" min="0" value="3"></div>
+    </div>
+    <label>Field-guide description</label><textarea id="desc">Something new in the halls. It has not decided about you yet.</textarea>
+    <label>Field-guide notes</label><textarea id="notes">Written in the entity studio.</textarea>
+    <label>Tips <span class="small">(one per line)</span></label><textarea id="tips">Keep your distance.
+It gives up quickly.</textarea>
+    <h3>Behaviour flags <span class="small">tick everything that applies</span></h3>
+    <div class="row" id="flags"></div>
+  </section>
+</div>
+
+<aside>
+  <div>
+    <h2>Preview</h2>
+    <canvas id="c"></canvas>
+    <div class="row" style="margin-top:8px">
+      <div><label>It is</label><select id="pose">
+        <option value="idle">standing still</option>
+        <option value="walk" selected>walking</option>
+        <option value="chase">chasing you</option>
+      </select></div>
+      <button type="button" id="reseed" style="flex:0 0 auto">New random bits</button>
+      <span class="badge" id="readout">-</span>
+    </div>
+    <p class="hint">Drag to orbit, scroll to zoom. Creatures are built out of randomness, so "new random bits" gives a
+      different individual of the same species.</p>
+  </div>
+
+  <div class="steps">
+    <h2>Put it in the game</h2>
+    <ol>
+      <li>Press <b>Download .js</b> (or <b>Copy the file</b>) and save it as <code id="path1">entities/hall-thing.js</code></li>
+      <li>Open <code>entities/loader.js</code> and add this line to the list, before <code>'core/phobia-finish.js'</code>:
+        <pre id="line1">    'hall-thing.js',</pre></li>
+      <li>Reload the game. The creature is in the level studio's "who is in it" list, so a level can spawn it.</li>
+    </ol>
+    <div class="row" style="margin-top:8px">
+      <button type="button" id="dl">Download .js</button>
+      <button type="button" id="copy">Copy the file</button>
+      <button type="button" id="copyline">Copy the loader line</button>
+    </div>
+    <div id="problems"></div>
+  </div>
+
+  <div>
+    <h2>The file it will write</h2>
+    <p class="hint">This is plain text. Anything here can be edited by hand later - the numbers are the same ones the
+      sliders set.</p>
+    <pre id="file">-</pre>
+  </div>
+</aside>
+</main>
+
+<script>window.__mod = {};</script>
+<script src="../lib/three.js"></script>
+<script src="../lib/BufferGeometryUtils.js"></script>
+<script src="../lib/shaderpatch.js"></script>
+<script src="../lib/rng.js"></script>
+<script src="../entities/loader.js"></script>
+<script>
+// ============================================================================
+// ENTITY STUDIO - writes one entities/<id>.js file (a model builder plus the
+// creature's stats) out of the controls above, and shows the result live.
+//
+// The generated file uses the same shared parts as every creature in the game
+// (entities/core/rig.js and models-kit.js), so it walks, hunts or ignores you
+// exactly like the built-in ones do.
+// ============================================================================
+const GAME = {"entities":["absence","arbiter","beast","bleeder","bloom","chase","clump","coil","colossus","counter","crawler","deathmoth","deephand","dread","duller","examiner","faceling","flawless","formless","frostbitten","glitch","glutton","goodboy","haze","hive","horizon","hound","hourman","howler","jester","librarian","lure","mannequin","mourner","murder","mut_chorus","mut_drowned","mut_fractured","mut_splice","mut_sprawl","mut_thicket","ninelives","onlooker","overgrowth","palestag","partygoer","peripheral","pg_attendant","pg_bouncer","pg_lifeguard","pg_mascot","pg_ringmaster","phantom","phlebotomist","porcelain","puppet","reflection","revenant","rootwalker","sandman","showman","skinstealer","smiler","someone","squeeze","stature","stormcaller","stranger","supervisor","thorn","troglosidae","umbra","updraft","weaver","whisperer","window","worm","wretch"],"classes":["Apex Hostile","Hostile","Hostile / Ethereal","Hostile at night","Hostile in numbers","Lethal","Lethal (indirectly)","Lethal / Apex","Passive"],"stats":{"smiler":{"name":"Smiler","cls":"Hostile","speed":0.8,"chase":2,"dmg":34,"detect":6.5},"partygoer":{"name":"Partygoer","cls":"Hostile","speed":1.1,"chase":3.3,"dmg":22,"detect":13},"howler":{"name":"Howler","cls":"Hostile","speed":1.3,"chase":4.8,"dmg":30,"detect":8},"skinstealer":{"name":"Skin Stealer","cls":"Hostile","speed":1.1,"chase":2.9,"dmg":30,"detect":12},"chase":{"name":"The Chase","cls":"Lethal","speed":0,"chase":4.2,"dmg":45,"detect":999},"hound":{"name":"Hound","cls":"Hostile","speed":1.3,"chase":4.3,"dmg":18,"detect":6.5},"faceling":{"name":"Faceling","cls":"Passive","speed":1,"chase":0,"dmg":0,"detect":0},"wretch":{"name":"Wretch","cls":"Hostile","speed":1,"chase":3.4,"dmg":20,"detect":10},"clump":{"name":"Clump","cls":"Hostile","speed":0.6,"chase":1.8,"dmg":40,"detect":16},"deathmoth":{"name":"Deathmoth","cls":"Hostile","speed":1.6,"chase":3.7,"dmg":25,"detect":11},"mannequin":{"name":"Mannequin","cls":"Hostile","speed":0,"chase":5.8,"dmg":30,"detect":24},"haze":{"name":"The Haze","cls":"Hostile","speed":0.5,"chase":0.95,"dmg":6,"detect":16},"worm":{"name":"The Worm","cls":"Lethal","speed":1.7,"chase":4.6,"dmg":45,"detect":16},"whisperer":{"name":"Whisperer","cls":"Hostile","speed":1,"chase":2.6,"dmg":30,"detect":30},"stature":{"name":"The Stature","cls":"Lethal","speed":0.9,"chase":3.5,"dmg":45,"detect":28},"crawler":{"name":"Crawler","cls":"Hostile","speed":1.4,"chase":6.4,"dmg":24,"detect":14},"duller":{"name":"Duller","cls":"Hostile","speed":1,"chase":3.3,"dmg":32,"detect":11},"troglosidae":{"name":"Troglosidae","cls":"Hostile","speed":0.8,"chase":5,"dmg":26,"detect":9},"window":{"name":"Window","cls":"Hostile","speed":0,"chase":0,"dmg":22,"detect":2.4},"beast":{"name":"The Beast of Level 5","cls":"Hostile","speed":0.9,"chase":3.1,"dmg":38,"detect":13},"peripheral":{"name":"Peripheral","cls":"Passive","speed":0.6,"chase":0,"dmg":0,"detect":0},"puppet":{"name":"Stop-Motion Puppet","cls":"Hostile at night","speed":0.7,"chase":3.3,"dmg":24,"detect":14},"weaver":{"name":"The Weaver","cls":"Hostile","speed":1,"chase":4.6,"dmg":26,"detect":9},"coil":{"name":"The Coil","cls":"Lethal","speed":1.2,"chase":3.4,"dmg":34,"detect":11},"goodboy":{"name":"The Good Boy","cls":"Apex Hostile","speed":1.8,"chase":6.2,"dmg":42,"detect":18},"murder":{"name":"The Murder","cls":"Hostile","speed":2.4,"chase":4.2,"dmg":9,"detect":26},"ninelives":{"name":"Nine Lives","cls":"Lethal / Apex","speed":1.6,"chase":3.8,"dmg":55,"detect":24},"revenant":{"name":"The Revenant","cls":"Hostile / Ethereal","speed":0.7,"chase":2.4,"dmg":38,"detect":35},"porcelain":{"name":"Porcelain","cls":"Hostile","speed":0,"chase":5.2,"dmg":20,"detect":40},"showman":{"name":"The Showman","cls":"Hostile","speed":1.2,"chase":3.8,"dmg":32,"detect":20},"jester":{"name":"Giggles","cls":"Lethal","speed":1.6,"chase":5.4,"dmg":28,"detect":16},"mourner":{"name":"The Restless Dead","cls":"Hostile","speed":1.1,"chase":3.6,"dmg":22,"detect":8},"phlebotomist":{"name":"The Phlebotomist","cls":"Hostile","speed":1.1,"chase":3.7,"dmg":16,"detect":12},"lure":{"name":"The Lure","cls":"Lethal","speed":0.7,"chase":1.6,"dmg":42,"detect":30},"palestag":{"name":"The Pale Stag","cls":"Lethal","speed":1.3,"chase":5.8,"dmg":36,"detect":40},"updraft":{"name":"The Updraft","cls":"Lethal (indirectly)","speed":1.6,"chase":2.8,"dmg":0,"detect":30},"colossus":{"name":"The Colossus","cls":"Lethal","speed":3,"chase":3,"dmg":55,"detect":999},"squeeze":{"name":"The Squeeze","cls":"Hostile","speed":1,"chase":5.6,"dmg":26,"detect":10},"horizon":{"name":"The Horizon Man","cls":"Lethal","speed":2.4,"chase":2.4,"dmg":60,"detect":999},"absence":{"name":"The Absence","cls":"Hostile","speed":0.8,"chase":1.25,"dmg":24,"detect":999},"deephand":{"name":"The Deep Hand","cls":"Lethal (indirectly)","speed":0,"chase":0,"dmg":18,"detect":6},"onlooker":{"name":"The Onlooker","cls":"Hostile","speed":0,"chase":4.6,"dmg":34,"detect":999},"someone":{"name":"Someone","cls":"Lethal","speed":1.2,"chase":5.2,"dmg":38,"detect":14},"hive":{"name":"The Hive","cls":"Hostile","speed":1,"chase":3.3,"dmg":18,"detect":12},"umbra":{"name":"The Umbra","cls":"Lethal","speed":1,"chase":4.6,"dmg":30,"detect":14},"reflection":{"name":"Your Reflection","cls":"Hostile","speed":0,"chase":0,"dmg":30,"detect":999},"examiner":{"name":"The Examiner","cls":"Hostile","speed":0.9,"chase":2.8,"dmg":30,"detect":9},"flawless":{"name":"The Flawless","cls":"Hostile","speed":0.8,"chase":3.9,"dmg":26,"detect":999},"arbiter":{"name":"The Arbiter","cls":"Lethal","speed":1,"chase":4.4,"dmg":34,"detect":999},"sandman":{"name":"The Sandman","cls":"Lethal","speed":0,"chase":3.2,"dmg":40,"detect":999},"thorn":{"name":"The Thornbound","cls":"Hostile","speed":1.1,"chase":3.4,"dmg":22,"detect":11},"formless":{"name":"The Formless","cls":"Lethal","speed":1.2,"chase":4,"dmg":30,"detect":16},"dread":{"name":"The Dread","cls":"Lethal","speed":1,"chase":3,"dmg":30,"detect":18},"phantom":{"name":"Phantom","cls":"Passive","speed":0.5,"chase":0,"dmg":0,"detect":0},"stranger":{"name":"The Strangers","cls":"Hostile in numbers","speed":0,"chase":1.7,"dmg":0,"detect":999},"hourman":{"name":"The Hour Man","cls":"Lethal","speed":1,"chase":1.6,"dmg":45,"detect":999},"counter":{"name":"The Counter","cls":"Lethal","speed":0,"chase":5,"dmg":36,"detect":999},"glitch":{"name":"Corrupted","cls":"Hostile","speed":0,"chase":0,"dmg":28,"detect":999},"stormcaller":{"name":"The Stormcaller","cls":"Lethal","speed":2,"chase":4.2,"dmg":40,"detect":999},"frostbitten":{"name":"The Frostbitten","cls":"Hostile","speed":0.7,"chase":1.6,"dmg":26,"detect":10},"bleeder":{"name":"The Bleeder","cls":"Hostile","speed":1,"chase":3.5,"dmg":22,"detect":12},"bloom":{"name":"The Bloom","cls":"Hostile","speed":0,"chase":3.8,"dmg":28,"detect":999},"librarian":{"name":"The Librarian","cls":"Lethal","speed":0.8,"chase":4.4,"dmg":34,"detect":0},"overgrowth":{"name":"The Overgrowth","cls":"Hostile","speed":0.9,"chase":2.4,"dmg":20,"detect":14},"glutton":{"name":"The Glutton","cls":"Hostile","speed":0.9,"chase":3.4,"dmg":24,"detect":9},"rootwalker":{"name":"The Rootwalker","cls":"Lethal","speed":0,"chase":1.8,"dmg":38,"detect":999},"supervisor":{"name":"The Supervisor","cls":"Hostile","speed":1,"chase":3.9,"dmg":30,"detect":0},"mut_chorus":{"name":"The Chorus","cls":"Hostile","speed":0.9,"chase":2.3,"dmg":40,"detect":8},"mut_splice":{"name":"The Splice","cls":"Hostile","speed":1.1,"chase":3,"dmg":34,"detect":12},"mut_thicket":{"name":"The Thicket","cls":"Lethal","speed":0.9,"chase":3.6,"dmg":45,"detect":28},"mut_sprawl":{"name":"The Sprawl","cls":"Lethal","speed":1.4,"chase":6.2,"dmg":26,"detect":14},"mut_fractured":{"name":"The Fractured","cls":"Hostile","speed":0,"chase":5.6,"dmg":32,"detect":24},"mut_drowned":{"name":"The Drowned Howler","cls":"Hostile","speed":1.3,"chase":4.6,"dmg":32,"detect":9},"pg_lifeguard":{"name":"The Lifeguard","cls":"Hostile","speed":1.1,"chase":3.1,"dmg":30,"detect":13},"pg_mascot":{"name":"The Mascot","cls":"Lethal","speed":0.9,"chase":3.5,"dmg":45,"detect":28},"pg_attendant":{"name":"The Attendant","cls":"Hostile","speed":0,"chase":5.6,"dmg":30,"detect":24},"pg_bouncer":{"name":"The Bouncer","cls":"Lethal","speed":1.4,"chase":6.3,"dmg":25,"detect":14},"pg_ringmaster":{"name":"The Ringmaster","cls":"Hostile","speed":1.3,"chase":4.7,"dmg":30,"detect":9}}};
+
+// ------------------------------------------------------------------ shorthand
+const $ = (id) => document.getElementById(id);
+const M = window.__mod;
+const THREE = M['vendor/three/build/three.module.js'];
+const { installGlobalPatches, GLOBAL_UNIFORMS } = M['src/gfx/shaderpatch.js'];
+const { RNG } = M['src/core/rng.js'];
+const { setLight } = M['src/entities/rig.js'];
+const ED = M['src/entities/registry.js'].ENTITY_DEFS;
+const str = (s) => "'" + String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n') + "'";
+const num = (id) => parseFloat($(id).value) || 0;
+const small = (n) => String(parseFloat(Number(n).toPrecision(6)));
+const clampRange = (v, a, b) => Math.min(b, Math.max(a, v));
+
+const CLASSES = (GAME.classes && GAME.classes.length) ? GAME.classes : ['Passive', 'Hostile', 'Lethal'];
+const FLAGS = [
+  ['passive', 'never attacks; wanders about'],
+  ['watcher', 'stands still and watches you'],
+  ['statue', 'only moves while you are not looking'],
+  ['crawler', 'moves along the ceiling and walls'],
+  ['darkOnly', 'only exists in the dark'],
+  ['howl', 'howls when it sees you'],
+  ['fly', 'flies, ignoring the floor'],
+  ['noclip', 'passes through walls'],
+  ['night', 'appears at night'],
+  ['camo', 'nearly invisible until it is close'],
+  ['ambush', 'waits, then lunges'],
+  ['rare', 'a rare spawn'],
+  ['relentless', 'never gives up the chase'],
+  ['innocuous', 'looks harmless'],
+  ['static', 'does not move at all'],
+];
+
+// ------------------------------------------------------------------ presets
+const PRESETS = [
+  {
+    name: 'Thin pale watcher',
+    kind: 'biped', height: 2.1, build: -0.6, head: 0.85, limbs: 1.15, stride: 1.5, horns: 0, eyes: 0,
+    skinbase: '#d8cfc0', skindark: '#8a7f70', skinlight: '#f4eee2', veins: 0.35, mottle: 0.25, rough: 0.35,
+    clothes: false, claws: false, top: '#3a3a3a', bottom: '#2b2b2b', shoes: '#1a1714', stains: 0.15,
+    eyecolor: '#f4f2ec', eyeglow: '#ffd7a0', gloweyes: false,
+    name2: 'Pale Watcher', id: 'pale-watcher', num: 'Entity 88', cls: 'Passive', size: '2.1 m, mostly elbows',
+    speed: 0.6, chase: 0, detect: 9, dmg: 0, reach: 0, cd: 1, memory: 0,
+    desc: 'Tall, pale and still. It is in the room before you notice the room.',
+    notes: 'A watcher: it never chases. It is simply always already there, standing in the far doorway, not moving.',
+    tips: 'Do not stare at it.\nIt never blocks a door, so walk past.',
+    flags: ['watcher', 'passive'],
+  },
+  {
+    name: 'Crawling thing',
+    kind: 'quad', height: 0.9, build: 0.15, head: 0.9, limbs: 1.05, stride: 1.1, horns: 0, eyes: 2,
+    skinbase: '#8c8a86', skindark: '#4c4a46', skinlight: '#a9a6a0', veins: 0.45, mottle: 0.7, rough: 0.4,
+    clothes: false, claws: true, top: '#3a3a3a', bottom: '#2b2b2b', shoes: '#1a1714', stains: 0.4,
+    eyecolor: '#f4f2ec', eyeglow: '#ffd7a0', gloweyes: false,
+    name2: 'Crawling Thing', id: 'crawling-thing', num: 'Entity 61', cls: 'Hostile', size: '1.5 m long, low to the floor',
+    speed: 1.3, chase: 4.2, detect: 8, dmg: 18, reach: 1.35, cd: 0.9, memory: 4,
+    desc: 'Fast, low and quiet, with too many eyes and no hair at all.',
+    notes: 'A quadruped hunter. It loses interest if you break its line of sight.',
+    tips: 'Break the chase around a corner.\nIt is slow up stairs.',
+    flags: ['crawler'],
+  },
+  {
+    name: 'Masked intruder (human)',
+    kind: 'biped', height: 1.8, build: 0.05, head: 1, limbs: 1, stride: 1.35, horns: 0, eyes: 0,
+    skinbase: '#c9a68a', skindark: '#6a4a3a', skinlight: '#f0d8c8', veins: 0.1, mottle: 0.25, rough: 0.6,
+    clothes: true, claws: false, top: '#3c3c40', bottom: '#23252b', shoes: '#141210', stains: 0.35,
+    eyecolor: '#141210', eyeglow: '#ff3b30', gloweyes: false,
+    name2: 'Man In The Wrong Coat', id: 'wrong-coat', num: 'Entity 12', cls: 'Hostile', size: '1.8 m',
+    speed: 1.1, chase: 3.4, detect: 7, dmg: 12, reach: 1.25, cd: 1.1, memory: 3,
+    desc: 'Someone in a coat that does not fit them. They are looking for the same door as you.',
+    notes: 'A human-shaped threat: slow, but it keeps coming and it walks in a straight line.',
+    tips: 'Close doors between you.\nDo not try to out-turn it in the open.',
+    flags: [],
+  },
+  {
+    name: 'Horned brute (heavy)',
+    kind: 'biped', height: 2.6, build: 0.85, head: 0.9, limbs: 1.1, stride: 1.7, horns: 2, eyes: 0,
+    skinbase: '#7a4a3a', skindark: '#3a201a', skinlight: '#a8765c', veins: 0.6, mottle: 0.6, rough: 0.45,
+    clothes: false, claws: true, top: '#2e2a26', bottom: '#23252b', shoes: '#141210', stains: 0.5,
+    eyecolor: '#ffd7a0', eyeglow: '#ff8a3a', gloweyes: true,
+    name2: 'Horned Brute', id: 'horned-brute', num: 'Entity 47', cls: 'Lethal', size: '2.6 m, broad',
+    speed: 0.9, chase: 3.0, detect: 6, dmg: 32, reach: 1.6, cd: 1.6, memory: 5,
+    desc: 'Big enough that the floor complains. Two horns, and it uses them.',
+    notes: 'A slow, heavy hitter. Hard to outrun around a short corner, easy around a long one.',
+    tips: 'Never fight it in a dead end.\nBack away while it swings.',
+    flags: ['relentless'],
+  },
+  {
+    name: 'Child in wet clothes',
+    kind: 'biped', height: 1.25, build: -0.2, head: 1.25, limbs: 0.95, stride: 1.1, horns: 0, eyes: 0,
+    skinbase: '#cfd6cf', skindark: '#7d8a7d', skinlight: '#eef2ee', veins: 0.15, mottle: 0.2, rough: 0.75,
+    clothes: true, claws: false, top: '#8a98a8', bottom: '#4a5460', shoes: '#2a2622', stains: 0.5,
+    eyecolor: '#0c0c0c', eyeglow: '#9ad7ff', gloweyes: false,
+    name2: 'Wet Child', id: 'wet-child', num: 'Entity 33', cls: 'Passive', size: '1.25 m, soaking',
+    speed: 0.9, chase: 0, detect: 5, dmg: 0, reach: 0, cd: 1, memory: 1,
+    desc: 'A small figure in wet clothes, walking somewhere with purpose.',
+    notes: 'Harmless, but it stares. It will not answer, and it will not stop walking.',
+    tips: 'Let it pass.',
+    flags: ['innocuous', 'passive'],
+  },
+];
+
+// ------------------------------------------------------------------ preview
+let renderer = null, scene = null, camera = null, hemi = null, key = null, rim = null;
+let current = null, seed = 1, camRig = null;
+const cam = { target: new THREE.Vector3(0, 0.9, 0), yaw: 0.7, pitch: 0.22, dist: 4.5, want: 4.5 };
+
+function initPreview() {
+  const canvas = $('c');
+  try {
+    renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  } catch (e) {
+    const p = document.createElement('p');
+    p.className = 'warn';
+    p.textContent = 'No 3D preview in this browser (' + (e && e.message) + '). The file below is still good.';
+    if (canvas.parentElement) canvas.parentElement.insertBefore(p, canvas); else (canvas.parentNode || document.body).appendChild(p);
+    renderer = null;
+    return;
+  }
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  installGlobalPatches();
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x191712);
+  scene.fog = new THREE.Fog(0x191712, 16, 42);
+  camera = new THREE.PerspectiveCamera(42, 1, 0.05, 400);
+  camRig = new THREE.Group();
+  scene.add(camRig);
+  hemi = new THREE.HemisphereLight(0xdfe6ff, 0x3a3228, 0.9);
+  key = new THREE.DirectionalLight(0xfff0d8, 2.2);
+  key.position.set(4, 8, 5);
+  key.castShadow = true;
+  key.shadow.mapSize.set(2048, 2048);
+  Object.assign(key.shadow.camera, { left: -8, right: 8, top: 8, bottom: -8, near: 0.5, far: 40 });
+  key.shadow.bias = -0.0004;
+  rim = new THREE.DirectionalLight(0x8fa8ff, 0.8);
+  rim.position.set(-5, 3, -6);
+  scene.add(hemi, key, key.target, rim);
+  const floor = new THREE.Mesh(new THREE.CircleGeometry(400, 64).rotateX(-Math.PI / 2),
+    new THREE.MeshStandardMaterial({ color: 0x2a2824, roughness: 0.95 }));
+  floor.receiveShadow = true;
+  scene.add(floor);
+  const grid = new THREE.GridHelper(20, 40, 0xe9c46a, 0x6b6451);
+  grid.material.transparent = true; grid.material.opacity = 0.24; grid.position.y = 0.002;
+  scene.add(grid);
+
+  let dragging = false, lx = 0, ly = 0;
+  canvas.addEventListener('pointerdown', (e) => { dragging = true; lx = e.clientX; ly = e.clientY; canvas.setPointerCapture(e.pointerId); });
+  canvas.addEventListener('pointerup', (e) => { dragging = false; });
+  canvas.addEventListener('pointercancel', () => { dragging = false; });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    cam.yaw -= (e.clientX - lx) * 0.0065;
+    cam.pitch = clampRange(cam.pitch + (e.clientY - ly) * 0.0065, -0.2, 1.5);
+    lx = e.clientX; ly = e.clientY;
+  });
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    cam.want = clampRange(cam.want * Math.exp(e.deltaY * 0.0012), 0.8, 40);
+  }, { passive: false });
+}
+
+function disposeCurrent() {
+  if (!current) return;
+  scene.remove(current.holder);
+  current.model.root.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
+  current = null;
+}
+
+function frameCamera() {
+  const m = current.model;
+  const h = Math.max(m.height || 1.8, 0.5), r = Math.max(m.radius || 0.4, 0.2);
+  cam.want = clampRange(Math.max(h, r * 2.2) * 2.6 + 1.2, 1.4, 30);
+  cam.dist = cam.want;
+  cam.target.set(0, h * 0.5, 0);
+  const reach = Math.max(8, h * 1.8);
+  const sc = key.shadow.camera;
+  sc.left = -reach; sc.right = reach; sc.top = reach; sc.bottom = -reach; sc.far = reach * 5;
+  sc.updateProjectionMatrix();
+}
+
+/** Build the file text, run it (it registers itself), and put the model on screen. */
+function rebuild(reseed) {
+  if (!renderer) return;
+  const built = buildFile();
+  let ok = true;
+  try {
+    new Function(built.text)();
+  } catch (e) {
+    ok = false;
+    $('problems').innerHTML = '<p class="warn">The generated file threw an error: ' + String(e && e.message) + '</p>';
+  }
+  if (!ok || !M['src/entities/registry.js'].BUILDERS[built.id]) return;
+  disposeCurrent();
+  if (reseed) seed += 1;
+  let model;
+  try {
+    model = M['src/entities/models.js'].buildModel(built.id, new RNG(seed * 7919 + 13));
+  } catch (e) {
+    $('problems').innerHTML = '<p class="warn">The model could not be built: ' + String(e && e.message) + '</p>';
+    return;
+  }
+  model.root.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = false; o.frustumCulled = false; } });
+  const holder = new THREE.Group();
+  holder.add(model.root);
+  scene.add(holder);
+  current = {
+    id: built.id, model, holder,
+    st: { speed: 0, phase: Math.random() * 6, t: Math.random() * 10, look: 0, attack: 0, chasing: false,
+      crawl: false, ceiling: 3.2, prox: 0, stride: num('stride'), pitch: $('kind').value === 'quad' ? 1.18 : 0 },
+  };
+  for (let i = 0; i < 8; i++) { try { model.animate(current.st, 0.016); } catch (e) { break; } }
+  setLight(model.mats, 0.34, 0.34, 0.34);
+  frameCamera();
+}
+
+function placeCamera() {
+  const cp = Math.cos(cam.pitch);
+  camera.position.set(
+    Math.sin(cam.yaw) * cp * cam.dist,
+    Math.max(0.15, Math.sin(cam.pitch) * cam.dist + 0.4),
+    Math.cos(cam.yaw) * cp * cam.dist);
+  camera.lookAt(cam.target);
+}
+
+let last = performance.now(), fpsT = 0, frames = 0;
+function loop(now) {
+  requestAnimationFrame(loop);
+  if (!renderer) return;
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  const canvas = $('c');
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (canvas.width !== Math.floor(w * renderer.getPixelRatio()) || canvas.height !== Math.floor(h * renderer.getPixelRatio())) {
+    renderer.setSize(w, h, false);
+    camera.aspect = w / Math.max(1, h);
+    camera.updateProjectionMatrix();
+  }
+  GLOBAL_UNIFORMS.uTime.value += dt;
+  if (current) {
+    const pose = $('pose').value;
+    const walk = Math.max(num('speed'), 0.6), run = Math.max(num('chase'), walk * 1.6);
+    const target = pose === 'idle' ? 0 : pose === 'chase' ? run : walk;
+    current.st.speed += (target - current.st.speed) * Math.min(1, dt * 4);
+    current.st.chasing = pose === 'chase';
+    current.st.stride = num('stride');
+    try {
+      current.model.animate(current.st, dt);
+    } catch (e) {
+      current = null;
+      $('problems').innerHTML = '<p class="warn">The animation threw an error: ' + String(e && e.message) + '</p>';
+      return;
+    }
+  }
+  cam.dist += (cam.want - cam.dist) * Math.min(1, dt * 8);
+  placeCamera();
+  key.target.position.copy(cam.target);
+  key.target.updateMatrixWorld();
+  renderer.render(scene, camera);
+  frames++; fpsT += dt;
+  if (fpsT > 0.5) {
+    $('readout').textContent = (frames / fpsT).toFixed(0) + ' fps' + (current ? ' \u00b7 ' + current.st.speed.toFixed(2) + ' m/s' : '');
+    fpsT = 0; frames = 0;
+  }
+}
+
+// ------------------------------------------------------------------ the flag and class lists
+const flagBox = $('flags');
+for (const [id, help] of FLAGS) {
+  const l = document.createElement('label');
+  l.className = 'chk';
+  l.style.flex = '1 1 165px';
+  l.innerHTML = '<input type="checkbox" id="flag_' + id + '"><span>' + id + ' <span class="small">' + help + '</span></span>';
+  flagBox.appendChild(l);
+}
+for (const c of CLASSES) { const o = document.createElement('option'); o.value = c; o.textContent = c; $('cls').appendChild(o); }
+$('cls').value = CLASSES.includes('Hostile') ? 'Hostile' : CLASSES[0];
+
+const presetBox = $('presets');
+PRESETS.forEach((p) => {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.textContent = p.name;
+  b.addEventListener('click', () => applyPreset(p));
+  presetBox.appendChild(b);
+});
+function applyPreset(p) {
+  const map = { name2: 'name' };
+  for (const k of Object.keys(p)) {
+    if (k === 'flags' || k === 'name') continue;
+    const el = $(map[k] || k);
+    if (!el) continue;
+    if (el.type === 'checkbox') el.checked = !!p[k];
+    else el.value = p[k];
+  }
+  for (const [id] of FLAGS) $('flag_' + id).checked = (p.flags || []).includes(id);
+  $('filename').value = p.id;
+  $('filename').dataset.touched = '1';
+  update(false, true);
+}
+
+// ------------------------------------------------------------------ build the file
+function flagList() { return FLAGS.map(([id]) => id).filter((id) => $('flag_' + id).checked); }
+function tips() { return $('tips').value.split('\n').map((s) => s.trim()).filter(Boolean); }
+function camel(id) { return id.replace(/(^|-|_)([a-z0-9])/g, (m, a, b) => b.toUpperCase()); }
+
+function buildFile() {
+  const kind = $('kind').value;
+  const H = clampRange(num('height'), 0.6, 4);
+  const build = clampRange(num('build'), -1, 1);
+  const head = clampRange(num('head'), 0.6, 1.6);
+  const limbs = clampRange(num('limbs'), 0.8, 1.25);
+  const stride = clampRange(num('stride'), 0.8, 2.2);
+  const eyes = clampRange(Math.round(num('eyes')), 0, 6);
+  const horns = clampRange(Math.round(num('horns')), 0, 4);
+  const clothes = $('clothes').checked;
+  const claws = $('claws').checked;
+  const glow = $('gloweyes').checked;
+  const id = ($('id').value.trim() || 'my-entity').replace(/[^a-z0-9_-]/gi, '-').toLowerCase();
+  const name = $('name').value.trim() || id;
+  const fname = ($('filename').value.trim().replace(/[^a-z0-9_.-]/gi, '-').replace(/\.js$/, '') || id) + '.js';
+  const fn = 'build' + camel(id).replace(/^[a-z]/, (c) => c.toUpperCase());
+  const quad = kind === 'quad';
+  const k = quad ? H / 0.9 : H / 1.8;
+  const w = 1 + build * 0.35, thick = 1 + build * 0.45;
+
+  // ---- skeleton numbers -------------------------------------------------
+  const props = quad
+    ? {
+      hipH: 0.88 * k, thigh: 0.5 * k * limbs, shin: 0.46 * k * limbs, spine: 0.34 * k, chestH: 0.34 * k,
+      neck: 0.2 * k, shoulderW: 0.34 * w, upperArm: 0.42 * k * limbs, foreArm: 0.4 * k * limbs,
+      chestW: 0.3 * w, armR: 0.7 * thick, legR: 0.74 * thick, headR: 0.1 * head,
+    }
+    : {
+      hipH: 0.95 * k, thigh: 0.45 * k * limbs, shin: 0.43 * k * limbs, spine: 0.2 * k, chestH: 0.32 * k,
+      shoulderW: 0.4 * w, upperArm: 0.3 * k * limbs, foreArm: 0.27 * k * limbs, chestW: 0.36 * w,
+      armR: 0.9 * thick, legR: 0.9 * thick, headR: 0.112 * head,
+    };
+  const propText = Object.keys(props).map((key) => key + ': ' + small(props[key])).join(', ');
+
+  const eyeY = quad ? H * 0.95 : H * 0.92;
+  const bodyHeight = quad ? H * 1.2 : H;
+
+  // ---- material blocks --------------------------------------------------
+  const lines = [];
+  lines.push('  const skinT = organic(' + str(id + '-skin') + ', { base: ' + str($('skinbase').value) +
+    ', dark: ' + str($('skindark').value) + ', light: ' + str($('skinlight').value) + ', veins: ' + small(num('veins')) +
+    ', pores: 0.4, mottle: ' + small(num('mottle')) + ' });');
+  lines.push('  const skin = fleshMat(skinT, { rough: ' + small(clampRange(1 - num('rough'), 0.05, 1)) + ', bumpScale: 0.9 });');
+  if (clothes) {
+    lines.push('  const topT = cloth(' + str(id + '-clothing') + ', { base: ' + str($('top').value) + ', dark: ' + str('#202020') +
+      ", stain: '#3a3026', weave: 110, stains: " + small(num('stains')) + ' });');
+    lines.push("  const top = skinMat('#b0b0b0', { map: topT.map, bump: topT.bump, bumpScale: 0.8, rough: 0.85 });");
+    lines.push('  const botT = cloth(' + str(id + '-trousers') + ', { base: ' + str($('bottom').value) + ", dark: '#101010', twill: '#5a6680', weave: 80, stains: " +
+      small(num('stains')) + ', wear: ' + small(clampRange(num('stains') * 1.2, 0, 1)) + ' });');
+  } else {
+    lines.push('  const botT = cloth(' + str(id + '-hide') + ', { base: ' + str($('bottom').value) + ", dark: '#101010', weave: 80 });");
+  }
+  lines.push("  const bottom = skinMat('#a8a8a8', { map: botT.map, bump: botT.bump, bumpScale: 1.0, rough: 0.9 });");
+  lines.push('  const shoes = skinMat(' + str($('shoes').value) + ', { rough: 0.4 });');
+  if (claws) lines.push("  const clawM = skinMat('#1c1a18', { rough: 0.3 });");
+  if (horns) lines.push('  const hornM = skinMat(' + str($('skinlight').value) + ', { rough: 0.35 });');
+
+  const bodyOpts = ['sleeve: true'];
+  if (claws) bodyOpts.push('claws: ' + small(quad ? 0.045 : 0.03), 'clawMat: clawM');
+  if (quad) bodyOpts.push('chestDepth: 0.55', 'fingerLen: 0.07');
+  const mats = clothes
+    ? '{ skin, top, bottom, shoes }'
+    : '{ skin, top: skin, bottom: skin, shoes }';
+  lines.push('  buildBody(rig, p, ' + mats + ', { ' + bodyOpts.join(', ') + ' });');
+  lines.push('  const hl = headLift(p);');
+
+  // ---- head, face, eyes -------------------------------------------------
+  if (quad) {
+    lines.push('  // a low animal skull; the quad walker pitches the neck forward for you');
+    lines.push('  rig.attach(rig.head, xf(ellipsoid(p.headR * 0.9, p.headR * 0.85, p.headR * 1.35, 24, 18), { y: hl, z: p.headR * 0.4 }), skin, { parent: rig.neck, axis: [0, 1, 0], len: 1, bw: 0.015 });');
+    lines.push('  rig.attach(rig.head, xf(ellipsoid(p.headR * 0.62, p.headR * 0.5, p.headR * 1.1, 20, 16), { y: hl - p.headR * 0.32, z: p.headR * 1.5 }), skin, { parent: rig.neck, axis: [0, 1, 0], len: 1, bw: 0.01 });');
+    lines.push('  const gum = skinMat(' + str($('skindark').value) + ", { rough: 0.35 });");
+    lines.push('  rig.attach(rig.head, xf(ellipsoid(p.headR * 0.5, p.headR * 0.1, p.headR * 1.15, 18, 12), { y: hl - p.headR * 0.42, z: p.headR * 1.15 }), gum, { rigid: true, shadow: false });');
+    lines.push('  const eyeM = ' + (glow ? 'glowMat(' + str($('eyeglow').value) + ', { fog: false })' : 'skinMat(' + str($('eyecolor').value) + ', { rough: 0.15 })') + ';');
+    lines.push('  for (const x of [-0.045, 0.045]) rig.attach(rig.head, xf(ellipsoid(0.016, 0.013, 0.011), { x, y: hl + p.headR * 0.25, z: p.headR * 1.85 }), eyeM, { rigid: true, shadow: false });');
+    if (eyes) lines.push('  for (let i = 0; i < ' + eyes + '; i++) rig.attach(rig.head, xf(ellipsoid(0.013, 0.011, 0.009), { x: (i % 2 ? 1 : -1) * (0.05 + 0.025 * Math.floor(i / 2)), y: hl + p.headR * 0.45, z: p.headR * 1.6 }), eyeM, { rigid: true, shadow: false });');
+  } else {
+    lines.push('  headOn(rig, p, skin);');
+    lines.push('  const eyeM = ' + (glow ? 'glowMat(' + str($('eyeglow').value) + ', { fog: false })' : 'skinMat(' + str($('eyecolor').value) + ', { rough: 0.15 })') + ';');
+    lines.push('  for (const x of [-0.042, 0.042]) rig.attach(rig.head, xf(ellipsoid(0.018, 0.014, 0.01), { x, y: hl + 0.022, z: p.headR * 1.35 }), eyeM, { rigid: true, shadow: false });');
+    if (eyes) lines.push('  for (let i = 0; i < ' + eyes + '; i++) rig.attach(rig.head, xf(ellipsoid(0.014, 0.012, 0.009), { x: (i % 2 ? 1 : -1) * (0.05 + 0.022 * Math.floor(i / 2)), y: hl + 0.05 + 0.012 * Math.floor(i / 2), z: p.headR * 1.2 }), eyeM, { rigid: true, shadow: false });');
+    if (horns) {
+      lines.push('  // horns, curving back over the skull');
+      lines.push('  for (let i = 0; i < ' + horns + '; i++) {');
+      lines.push('    const sx = (i % 2 ? 1 : -1) * (0.032 + 0.022 * Math.floor(i / 2));');
+      lines.push('    rig.attach(rig.head, xf(new THREE.ConeGeometry(0.02, 0.07, 7), { x: sx, y: hl + p.headR * 0.85, rz: sx * -0.35 }), hornM, { rigid: true });');
+      lines.push('    rig.attach(rig.head, xf(new THREE.ConeGeometry(0.013, 0.09, 7), { x: sx * 1.6, y: hl + p.headR * 1.15, z: -p.headR * 0.2, rz: sx * -0.7 }), hornM, { rigid: true });');
+      lines.push('  }');
+    }
+  }
+
+  // ---- stats ------------------------------------------------------------
+  const flags = flagList();
+  const defLines = [];
+  defLines.push('  name: ' + str(name) + ', speed: ' + small(num('speed')) + ', chase: ' + small(num('chase')) +
+    ', detect: ' + small(num('detect')) + ', dmg: ' + small(num('dmg')) + ', reach: ' + small(num('reach')) +
+    ', cd: ' + small(Math.max(0.1, num('cd'))) + ', memory: ' + small(num('memory')) +
+    (flags.length ? ', ' + flags.join(': true, ') + ': true,' : ','));
+  defLines.push('  num: ' + str($('num').value.trim() || 'Entity 0') + ', cls: ' + str($('cls').value) +
+    ', size: ' + str($('size').value.trim() || '-') + ',');
+  defLines.push('  desc: ' + str($('desc').value.trim()) + ',');
+  defLines.push('  notes: ' + str($('notes').value.trim()) + ',');
+  defLines.push('  tips: [' + tips().map((t) => str(t)).join(', ') + '],');
+
+  const animator = quad ? 'animateQuad' : 'animateBiped';
+  const glowAnim = glow
+    ? '\n      const g = 0.72 + 0.28 * Math.sin(stt.t * 2.3 + (stt.chasing ? 2 : 0));\n      setLight([eyeM], g, g, g);'
+    : '';
+
+  const out = [
+    '// ' + '='.repeat(77),
+    '//  ' + name + "   (entity id: '" + id + "')",
+    '//',
+    '//  One self-contained entity file, written with other/entity-studio.html:',
+    '//    - the three.js model builder',
+    '//    - its stats / field-guide entry',
+    '//  Preview it live with other/entity-viewer.html (rotate, wander, sprint).',
+    '//  Shared building blocks live in entities/core/.',
+    '// ' + '='.repeat(77),
+    '(function () {',
+    "'use strict';",
+    'const __mod = (window.__mod = window.__mod || {});' + (horns ? "\nconst THREE = __mod['vendor/three/build/three.module.js'];" : ''),
+    "const { buildBody, cloth, fleshMat, headLift, " + (quad ? '' : 'headOn, ') + "HUMAN, organic, result } = __mod['src/entities/models.js'].HELPERS;",
+    'const { ' + animator + ', ellipsoid, ' + (glow ? 'glowMat, ' : '') + 'Rig, ' + (glow ? 'setLight, ' : '') + 'skinMat, xf } = __mod[\'src/entities/rig.js\'];',
+    "const { ENTITY_DEFS } = __mod['src/entities/registry.js'];",
+    '',
+    '/** ' + (quad ? 'A quadruped: ' : 'A humanoid: ') + (name) + '. ' + $('desc').value.trim().replace(/\n/g, ' ') + ' */',
+    'function ' + fn + '(rng) {',
+    '  const p = { ...HUMAN, ' + propText + ' };',
+    '  const rig = new Rig(p);',
+  ].concat(lines).concat([
+    '',
+    '  return result(rig, {',
+    "    kind: '" + (quad ? 'quad' : 'biped') + "', height: " + small(bodyHeight) + ', radius: ' + small(0.32 * w * (quad ? 1.25 : 1)) + ', eyeY: ' + small(eyeY) + ',',
+    '    animate(stt, dt) {',
+    '      stt.stride = ' + small(stride) + ';' + (quad ? '\n      if (stt.pitch === undefined) stt.pitch = 1.18;' : ''),
+    '      ' + animator + '(rig, stt, dt);' + glowAnim,
+    '    },',
+    '  });',
+    '}',
+    '',
+    // a dashed id is not an identifier: always register through the bracket form
+    "__mod['src/entities/registry.js'].BUILDERS['" + id + "'] = " + fn + ';',
+    '',
+    "ENTITY_DEFS['" + id + "'] = {",
+    defLines.join('\n'),
+    '};',
+    '})();',
+    '',
+  ]);
+
+  return { text: out.join('\n'), id, name, fname };
+}
+
+// ------------------------------------------------------------------ checks + output
+function problems(built) {
+  const out = [];
+  if (GAME.entities.includes(built.id)) out.push('There is already a creature with the id "' + built.id + '" - pick another id.');
+  if (!/^[a-z0-9][a-z0-9_-]*$/.test(built.id)) out.push('The id should be letters, numbers, dashes or underscores only.');
+  if (built.id.length < 3) out.push('The id is very short; you will have trouble finding it later.');
+  if (num('chase') > 0 && num('detect') <= 0) out.push('It chases but cannot see anything: raise "sees you at".');
+  if (num('chase') > 0 && num('dmg') <= 0) out.push('It chases but does no damage: give it damage or set the chase speed to 0.');
+  if ($('flag_passive').checked && num('chase') > 0) out.push('passive + a chase speed contradict each other: pick one.');
+  if ($('flag_watcher').checked && num('chase') > 0) out.push('watcher + a chase speed contradict each other: pick one.');
+  if (num('speed') === 0 && num('chase') === 0) out.push('It never moves. Fine for a statue or a watcher.');
+  if (num('height') > 3.4) out.push('Over 3.4 m it will not fit through most doorways.');
+  if (!tips().length) out.push('No tips: the field guide entry will be short.');
+  return out;
+}
+
+function update(reseed, quiet) {
+  const built = buildFile();
+  $('file').textContent = built.text;
+  $('path1').textContent = 'entities/' + built.fname;
+  $('line1').textContent = "    '" + built.fname + "',";
+  const probs = problems(built);
+  $('problems').innerHTML = probs.length
+    ? '<p class="warn">' + probs.length + ' thing(s) to check:</p><ul class="warn">' + probs.map((p) => '<li>' + p + '</li>').join('') + '</ul>'
+    : '<p class="ok">Nothing in the way of saving it.</p>';
+  if (!quiet) rebuild(reseed);
+  else $('problems').innerHTML += '<p class="hint">Press a slider or Rebuild if the preview does not follow along.</p>';
+}
+
+// ------------------------------------------------------------------ wiring
+$('dl').addEventListener('click', () => {
+  const built = buildFile();
+  const blob = new Blob([built.text], { type: 'text/javascript' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = built.fname;
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+$('copy').addEventListener('click', () => {
+  navigator.clipboard.writeText($('file').textContent);
+  $('copy').textContent = 'Copied';
+  setTimeout(() => { $('copy').textContent = 'Copy the file'; }, 1200);
+});
+$('copyline').addEventListener('click', () => navigator.clipboard.writeText($('line1').textContent));
+$('reseed').addEventListener('click', () => update(true));
+$('rebuild').addEventListener('click', () => update(false));
+
+$('id').addEventListener('input', () => {
+  if (!$('filename').dataset.touched) $('filename').value = ($('id').value.trim() || 'my-entity');
+});
+$('filename').addEventListener('input', () => { $('filename').dataset.touched = '1'; });
+let timer = null;
+document.querySelectorAll('input, select, textarea').forEach((el) => el.addEventListener('input', () => {
+  clearTimeout(timer);
+  timer = setTimeout(() => update(false), 260);
+}));
+
+initPreview();
+applyPreset(PRESETS[1]);
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

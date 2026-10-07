@@ -1,0 +1,133 @@
+// --------------------------------------------------------------------------
+// Δ-05 - Electrical Station, Dead Rails  (id: cor05, Corruption)
+// Sodium lamps dead for a hundred years, and a main breaker rusted into the wall. A canyon has opened across the station floor, bridged where the rails still line up, with a crevice cutting under the platform.
+//
+// Scene: 26 generator settings, 7 entity groups, 1 rare spawns, loot keys 9/water 5/batteries 5, 2 cuts in the floor (canyon, crevice), file corruption 0.45
+//    1. Find the four digits and enter the code  [keypad]
+//    2. Cut the main power  [breaker_main]
+//    3. Reach the freight lift before the lights go out  [elevator (final)]
+//
+// One level per file: change anything here and reload the game. Field list:
+// levels/README.md  -  build levels without code: other/level-studio.html
+// --------------------------------------------------------------------------
+LabLevels.add('corrupt', {
+  id: 'cor05',
+  name: 'Δ-05',
+  subtitle: 'Electrical Station, Dead Rails',
+  place: 'Level 3, the lights that stayed off',
+  cls: 'Class 5',
+  passive: false,
+  seed: 7205,
+  description: 'Sodium lamps dead for a hundred years, and a main breaker rusted into the wall. A canyon has opened across the station floor, bridged where the rails still line up, with a crevice cutting under the platform.',
+  intro: 'The lift is locked behind a keypad. Four workers each left one digit of the code. Then cut the power and run. The floor has split. The straight line to the lift is a long way down.',
+  spawn: [16, 16],
+  fall: true,
+  puzzle: true,
+  hum: 0.09,
+  ambientLight: [0.0344, 0.0322, 0.0278],
+  bounce: 0.22,
+  lightRange: 15,
+  fog: { color: 0x8d918e, density: 0.0312 },
+  sky: {
+    top: 0xaab6c0,
+    horizon: 0xd8dedc,
+    glow: 0x000000,
+    stars: 0,
+    moon: false,
+    clouds: 0.95,
+  },
+  tuning: { grimeScale: 2.25, wetScale: 1.485 },
+  corrupt: 0.45,
+  gen: {
+    type: 'lobby',
+    params: {
+      height: 3.2,
+      wallMat: 'concrete_dark',
+      floorMat: 'concrete_floor',
+      ceilMat: 'void_black',
+      fixtureMat: 'fixture_sodium',
+      frameMat: 'metal_dark',
+      fixtureColor: [1, 0.66, 0.34],
+      fixtureIntensity: 3.4,
+      density: [0.24, 0.58],
+      roomChance: 0.3,
+      pillarChance: 0.45,
+      doorwayChance: 0.09,
+      fixtureEvery: 3,
+      fixtureChance: 0.82,
+      deadChance: 0.28,
+      flickerChance: 0.2,
+      strobeChance: 0.05,
+      dyingChance: 0.11,
+      darkZones: 0.54,
+      missingTileChance: 0.105,
+      featureWeights: { pool: 0.4, glass: 0.4, collapse: 2.38, exit: 1, blackout: 1.3, leak: 1.2 },
+      props: 'industrial',
+      overgrown: 0.4,
+      cracked: 1,
+      damp: 0.55,
+      cuts: [
+        {
+          kind: 'canyon',
+          axis: 'z',
+          mid: 8,
+          length: 70,
+          offset: -22,
+          width: 5.5,
+          wobble: 10,
+          bridges: 2,
+          bridgeSpan: 4,
+          jag: 3,
+        },
+        {
+          kind: 'crevice',
+          axis: 'x',
+          mid: 8,
+          length: 60,
+          offset: 20,
+          runs: 2,
+          spacing: 18,
+          width: 1,
+          wobble: 8,
+        },
+      ],
+    },
+  },
+  stages: [
+    {
+      text: 'Find the four digits and enter the code',
+      hint: 'Notes are scattered around',
+      goal: 'keypad',
+      code: true,
+      dist: [30, 45],
+      clueDist: [10, 40],
+      clueTitle: 'A scrap of paper',
+    },
+    {
+      text: 'Cut the main power',
+      goal: 'breaker_main',
+      dist: [25, 40],
+      from: 'prev',
+      effects: [['powercut', 55, 6]],
+    },
+    {
+      text: 'Reach the freight lift before the lights go out',
+      goal: 'elevator',
+      dist: [36, 46],
+      from: 'prev',
+      final: true,
+      revert: true,
+    },
+  ],
+  entities: [
+    ['hound', 1, null],
+    ['faceling', 1, null],
+    ['mut_splice', 1, null],
+    ['mut_chorus', 2, null],
+    ['deathmoth', 1, null],
+    ['mut_chorus', 1],
+    ['mut_splice', 1],
+  ],
+  rare: [['duller', 0.49]],
+  loot: { keys: 9, water: 5, batteries: 5 },
+});

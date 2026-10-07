@@ -1,0 +1,197 @@
+{
+ "cor01": [
+  "description",
+  "gen.params.cuts",
+  "fall",
+  "corrupt"
+ ],
+ "cor02": [
+  "description",
+  "gen.params.cliff",
+  "gen.params.cuts",
+  "corrupt"
+ ],
+ "cor03": [
+  "description",
+  "gen.params.cuts",
+  "fall",
+  "corrupt"
+ ],
+ "cor04": [
+  "description",
+  "gen.params.cuts",
+  "fall",
+  "corrupt"
+ ],
+ "cor05": [
+  "description",
+  "gen.params.cliff",
+  "gen.params.cuts",
+  "corrupt"
+ ],
+ "cor06": [
+  "corrupt"
+ ],
+ "cor07": [
+  "description",
+  "gen.params.cliff",
+  "gen.params.cuts",
+  "corrupt"
+ ],
+ "cor08": [
+  "description",
+  "gen.params.cuts",
+  "fall",
+  "corrupt"
+ ],
+ "cor09": [
+  "corrupt"
+ ],
+ "cor10": [
+  "description",
+  "gen.params.cuts",
+  "fall",
+  "corrupt"
+ ],
+ "cor11": [
+  "corrupt"
+ ],
+ "cor12": [
+  "description",
+  "gen.params.cliff",
+  "gen.params.cuts",
+  "corrupt"
+ ],
+ "cor13": [
+  "corrupt"
+ ],
+ "cor14": [
+  "description",
+  "gen.params.cuts",
+  "fall",
+  "corrupt"
+ ],
+ "cor15": [
+  "corrupt"
+ ],
+ "cor16": [
+  "corrupt"
+ ],
+ "cor17": [
+  "corrupt"
+ ],
+ "cor18": [
+  "corrupt"
+ ],
+ "cor19": [
+  "description",
+  "gen.params.cliff",
+  "gen.params.cuts",
+  "corrupt"
+ ],
+ "cor20": [
+  "corrupt"
+ ],
+ "cor21": [
+  "description",
+  "gen.params.cliff",
+  "gen.params.cuts",
+  "corrupt"
+ ],
+ "cor22": [
+  "description",
+  "gen.params.cuts",
+  "fall",
+  "corrupt"
+ ],
+ "cor23": [
+  "corrupt"
+ ],
+ "cor24": [
+  "corrupt"
+ ],
+ "cor25": [
+  "description",
+  "gen.params.cuts",
+  "fall",
+  "corrupt"
+ ],
+ "cor26": [
+  "corrupt"
+ ],
+ "cor27": [
+  "description",
+  "gen.params.cuts",
+  "fall",
+  "corrupt"
+ ],
+ "cor28": [
+  "description",
+  "gen.params.cliff",
+  "gen.params.cuts",
+  "corrupt"
+ ],
+ "cor29": [
+  "description",
+  "gen.params.cuts",
+  "fall",
+  "corrupt"
+ ],
+ "cor30": [
+  "description",
+  "gen.params.cliff",
+  "gen.params.cuts",
+  "corrupt"
+ ],
+ "pg02": [
+  "intro",
+  "stages"
+ ],
+ "pg05": [
+  "description",
+  "intro",
+  "gen.params.height",
+  "gen.params.density",
+  "gen.params.roomChance",
+  "gen.params.doorwayChance",
+  "stages"
+ ],
+ "pg10": [
+  "description",
+  "intro",
+  "stages"
+ ],
+ "pg15": [
+  "intro",
+  "stages"
+ ],
+ "pg16": [
+  "description",
+  "intro",
+  "gen.params.density",
+  "gen.params.roomChance",
+  "gen.params.doorwayChance",
+  "stages",
+  "entities"
+ ],
+ "pg21": [
+  "intro",
+  "stages"
+ ],
+ "pg25": [
+  "intro",
+  "stages"
+ ],
+ "pg27": [
+  "description",
+  "intro",
+  "gen.params.density",
+  "gen.params.roomChance",
+  "stages",
+  "entities"
+ ],
+ "_packs": [
+  "PACKS[2].blurb",
+  "PACKS[3].blurb"
+ ]
+}

@@ -6295,6 +6295,7 @@ const FilmShader = {
     uDesat: { value: 0 },
     uWarp: { value: 0 },
     uAberr: { value: 0 },
+    uCorrupt: { value: 0 },
   },
   vertexShader: /* glsl */`
     varying vec2 vUv;
@@ -6304,7 +6305,7 @@ const FilmShader = {
     }`,
   fragmentShader: /* glsl */`
     uniform sampler2D tDiffuse;
-    uniform float uTime, uGrain, uChroma, uBrightness, uVignette, uDesat, uWarp, uAberr;
+    uniform float uTime, uGrain, uChroma, uBrightness, uVignette, uDesat, uWarp, uAberr, uCorrupt;
     varying vec2 vUv;
     void main() {
       vec2 uv = vUv;
@@ -6315,6 +6316,20 @@ const FilmShader = {
         float band = floor(uv.y * 48.0) + floor(uTime * 24.0) * 7.0;
         float tear = step(1.0 - uAberr * 0.12, fract(sin(band * 12.9898) * 43758.5453));
         uv.x += (fract(sin(band * 78.233) * 9631.7) - 0.5) * 0.05 * uAberr * tear;
+      }
+      // corruption pack: the picture is a file that failed to decode. Whole
+      // macroblocks go stale, repeat, shift sideways or drop a row of pixels.
+      if (uCorrupt > 0.001) {
+        vec2 blocks = vec2(26.0, 15.0);
+        vec2 bid = floor(vUv * blocks);
+        float bt = floor(uTime * 7.0);
+        float h = fract(sin(dot(bid, vec2(12.9898, 78.233)) + bt * 0.31) * 43758.5453);
+        if (h > 1.0 - 0.34 * uCorrupt) {
+          float h2 = fract(h * 137.0);
+          uv.x += (h2 - 0.5) * 0.2 * uCorrupt;
+          if (h2 > 0.72) uv.y += (floor(h2 * 9.0) - 4.0) * 0.03 * uCorrupt;
+          if (h2 > 0.55) uv.y = bid.y / blocks.y + fract(uv.y * blocks.y) * 0.88;   // a stale block repeats itself
+        }
       }
       vec2 c = uv - 0.5;
       float r2 = dot(c, c);
@@ -6334,6 +6349,17 @@ const FilmShader = {
       col *= 1.0 - uVignette * r2 * 1.25;
       float n = fract(sin(dot(vUv, vec2(12.9898, 78.233)) + uTime) * 43758.5453);
       col += (n - 0.5) * uGrain * 0.085;
+      // and the colour of some blocks is damaged: swapped channels, lost depth
+      if (uCorrupt > 0.001) {
+        vec2 db = floor(uv * vec2(26.0, 15.0));
+        float d = fract(sin(dot(db, vec2(41.7, 289.3)) + floor(uTime * 5.0) * 0.77) * 24634.6345);
+        if (d > 1.0 - 0.22 * uCorrupt) {
+          float d2 = fract(d * 53.0);
+          if (d2 < 0.34) col = col.brg;
+          else if (d2 < 0.68) col = floor(col * 5.0 + 0.5) / 5.0;
+          else col *= vec3(1.3, 0.86, 0.92);
+        }
+      }
       gl_FragColor = vec4(col, 1.0);
     }`,
 };
@@ -6426,6 +6452,8 @@ class Engine {
   }
 
   setLevel(level) {
+    // corruption pack: how far gone the level's file is (0 = clean)
+    this.corrupt = Math.max(0, Math.min(1, (level && level.corrupt) || 0));
     const fog = (level && level.fog) || { color: 0x000000, density: 0.03 };
     this.scene.fog.color.setHex(fog.color);
     this.scene.fog.density = fog.density;
@@ -6510,6 +6538,12 @@ class Engine {
     GLOBAL_UNIFORMS.uTime.value += dt;
     this.filmPass.uniforms.uTime.value = GLOBAL_UNIFORMS.uTime.value;
     this.filmPass.uniforms.uVignette.value = 0.35 + (settings.get('filmGrain') || 0) * 0.1;
+    // corruption: never quite stable - it breathes, and now and then it tears wide open
+    if (this.corrupt) {
+      const t = GLOBAL_UNIFORMS.uTime.value;
+      const spike = Math.sin(t * 7.3) * Math.sin(t * 2.1) > 0.86 ? 1.7 : 1.0;
+      this.filmPass.uniforms.uCorrupt.value = this.corrupt * spike * (0.62 + 0.38 * Math.abs(Math.sin(t * 0.9)));
+    } else if (this.filmPass.uniforms.uCorrupt.value !== 0) this.filmPass.uniforms.uCorrupt.value = 0;
   }
 
   render() {
@@ -6900,6 +6934,7 @@ __e['save'] = save;
 </script>
 <!-- every creature (model + stats + behaviour) lives in entities/; the file list is entities/loader.js -->
 <script src="entities/loader.js"></script>
+<script src="levels/loader.js"></script>
 <script>
 (function () {
 'use strict';
@@ -11639,6 +11674,9 @@ const { glowMat: glowMat, canvasTex: canvasTex, xf: xf, ellipsoid: ellipsoid, se
 // sample (like entities), with an animation for "using" it. Wall-mounted
 // goals have their back on the wall face and face +z.
 
+/** Playground slides are moulded plastic, and each tower gets one of the six colours. */
+const SLIDE_PLASTIC = ['slide_grey', 'slide_red', 'slide_blue', 'slide_yellow', 'slide_green', 'slide_orange'];
+
 const GOAL_INFO = {
   door_exit: { wall: true, depth: 0.2, prompt: 'Open the exit door', label: 'EXIT', color: '#3dff7a' },
   door_final: { wall: true, depth: 0.2, prompt: 'Go through THE EXIT', label: 'THE EXIT', color: '#ffffff' },
@@ -11666,6 +11704,7 @@ const GOAL_INFO = {
   musicbox: { wall: false, size: 0.5, prompt: 'Wind the music box', color: '#ffb0d0' },
   slide: { wall: false, size: 1.6, prompt: 'Sit down and push off', color: '#7fd6ff', reach: 7, big: true },
   stairs: { wall: false, size: 3.6, prompt: 'Open the stairwell door', color: '#3dff7a', reach: 10, big: true },
+  stairshaft: { wall: false, size: 3.2, prompt: 'Open the stairwell door', color: '#3dff7a', reach: 4.5, big: true },
 };
 
 /** What an open window in Level 188 shows: a painted view of another level. */
@@ -12014,57 +12053,145 @@ class Goal {
     const tints = ['metal_grey', 'metal_red', 'metal_blue', 'metal_yellow', 'metal_green', 'plastic_orange'];
     const glows = ['#aab4c0', '#ff5a4a', '#4aa8ff', '#ffd23a', '#5aff8a', '#ff9a3a'];
     if (t === 'stairs') {
-      // a stairwell: ten risers up between two walls to a landing with the door in the back wall, a roof that
-      // climbs with the stairs. Everything is solid and every step is a real step.
-      // long, shallow flights (0.25 m risers) under a tall roof; walls and roof climb with the stairs
+      // a stairwell: a narrow flight of real steps up between two walls to the door in the
+      // back wall, under a roof that climbs with the stairs. Walls at +-0.95, so the shaft
+      // is 1.9 m wide: domestic, tight, and nothing like a room you could get lost in.
+      // A whole level of stairwells uses the stairshaft below: one shaft, every flight in it.
       const R = this.opts.rise || 3, n = Math.max(8, Math.round(R / 0.25)), SL = 8.4, run = SL / n, zNear = -1.6 + SL, wall = tints[hue], WH = 3.9;
+      const hw = 0.95, wt = 0.2, dw = 0.5;
       this.stairLen = zNear;
       this.roofCols = [];
-      this.steps('concrete', -1.2, 1.2, zNear, run, n, R, wall, 1.2, 1.4, WH);
+      this.steps('concrete', -hw, hw, zNear, run, n, R, wall, hw, hw + wt, WH);
       for (let k = 0; k < n; k++) {
         const z1 = zNear - k * run, top = R * (k + 1) / n;
-        this.box(wall, -1.4, top + 3.6, z1 - run, 1.4, top + 3.8, z1);
+        this.box(wall, -hw - wt, top + 3.6, z1 - run, hw + wt, top + 3.8, z1);
         // easter egg: an invisible ceiling at the old, low height that only switches on when you jump about on the stairs
-        this.collider(-1.2, top + 2.3, z1 - run, 1.2, top + 2.5, z1);
+        this.collider(-hw, top + 2.3, z1 - run, hw, top + 2.5, z1);
         const c = this.colliders[this.colliders.length - 1]; c.enabled = false; c.flags = C.PLATFORM; this.roofCols.push(c);
       }
-      this.box('concrete', -1.2, 0, -3.4, 1.2, R, -1.6); this.collider(-1.2, 0, -3.4, 1.2, R, -1.6);
-      for (const [a, b] of [[-1.4, -1.2], [1.2, 1.4]]) { this.box(wall, a, 0, -3.4, b, R + WH, -1.6); this.collider(a, 0, -3.4, b, R + WH, -1.6); }
-      this.box(wall, -1.4, R + 3.6, -3.4, 1.4, R + 3.8, -1.6);
-      this.collider(-1.2, R + 2.3, -3.4, 1.2, R + 2.5, -1.6);
+      this.box('concrete', -hw, 0, -3.4, hw, R, -1.6); this.collider(-hw, 0, -3.4, hw, R, -1.6);
+      for (const [a, b] of [[-hw - wt, -hw], [hw, hw + wt]]) { this.box(wall, a, 0, -3.4, b, R + WH, -1.6); this.collider(a, 0, -3.4, b, R + WH, -1.6); }
+      this.box(wall, -hw - wt, R + 3.6, -3.4, hw + wt, R + 3.8, -1.6);
+      this.collider(-hw, R + 2.3, -3.4, hw, R + 2.5, -1.6);
       { const c = this.colliders[this.colliders.length - 1]; c.enabled = false; c.flags = C.PLATFORM; this.roofCols.push(c); }
       // the back wall, with the door
-      for (const [a, b] of [[-1.4, -0.58], [0.58, 1.4]]) { this.box(wall, a, 0, -3.4, b, R + WH, -3.2); this.collider(a, 0, -3.4, b, R + WH, -3.2); }
-      this.box(wall, -0.58, R + 2.17, -3.4, 0.58, R + WH, -3.2);
-      this.box('void_black', -0.58, R, -3.4, 0.58, R + 2.17, -3.3);
-      this.box('metal_dark', -0.6, R, -3.4, -0.52, R + 2.25, -3.2);
-      this.box('metal_dark', 0.52, R, -3.4, 0.6, R + 2.25, -3.2);
-      P.portal = this.add(xf(new THREE.PlaneGeometry(1.04, 2.17), { y: R + 1.085, z: -3.29 }), glowMat('#fffdf2', { fog: false }));
+      for (const [a, b] of [[-hw - wt, -dw], [dw, hw + wt]]) { this.box(wall, a, 0, -3.4, b, R + WH, -3.2); this.collider(a, 0, -3.4, b, R + WH, -3.2); }
+      this.box(wall, -dw, R + 2.17, -3.4, dw, R + WH, -3.2);
+      this.box('void_black', -dw, R, -3.4, dw, R + 2.17, -3.3);
+      this.box('metal_dark', -dw - 0.02, R, -3.4, -dw + 0.06, R + 2.25, -3.2);
+      this.box('metal_dark', dw - 0.06, R, -3.4, dw + 0.02, R + 2.25, -3.2);
+      P.portal = this.add(xf(new THREE.PlaneGeometry(1.0, 2.17), { y: R + 1.085, z: -3.29 }), glowMat('#fffdf2', { fog: false }));
       P.portal.visible = false;
-      P.leaf = this.pivot(-0.52, R, -3.24);
-      this.box('metal_grey', 0, 0.005, -0.025, 1.04, 2.16, 0.025, P.leaf);
-      this.box('chrome', 0.15, 1.0, 0.025, 0.95, 1.05, 0.06, P.leaf);
-      this.glowSign('STAIRS', '#3dff7a', 0.62, 0.2, R + 2.35, -3.19);
-      this.collider(-0.58, R, -3.4, 0.58, R + 2.2, -3.2);
+      P.leaf = this.pivot(-dw + 0.03, R, -3.24);
+      this.box('metal_grey', 0, 0.005, -0.025, dw * 2 - 0.06, 2.16, 0.025, P.leaf);
+      this.box('chrome', 0.15, 1.0, 0.025, dw * 2 - 0.12, 1.05, 0.06, P.leaf);
+      this.glowSign('STAIRS', '#3dff7a', 0.55, 0.2, R + 2.35, -3.19);
+      this.collider(-dw, R, -3.4, dw, R + 2.2, -3.2);
+    } else if (t === 'stairshaft') {
+      this.buildStairwell(P, tints[hue], glows[hue]);
     } else {
-      // a slide tower: ten steps up to a launch platform, a numbered arch, and a long open chute running away
-      // from it downhill into a tunnel mouth. The ride itself carries you much farther than this (see Ride).
+      // a slide tower: ten steps up to a launch platform, a numbered arch, and a chute of
+      // moulded plastic running away from it downhill into a tunnel mouth. The ride itself
+      // carries you much farther than this (see Ride), and the plastic is what you ride on:
+      // opaque, printed, with just enough sheen to catch the park lights.
       const len = this.opts.len || 8, H = 3.0, n = 10, run = 0.34, tint = tints[hue], glow = glows[hue];
+      const plastic = SLIDE_PLASTIC[hue % SLIDE_PLASTIC.length];
       this.steps('metal_grey', -0.95, 0.95, 5.8, run, n, H, tint, 0.95, 1.1, 0.9);
       this.box('metal_white', -1.1, 0, 0.4, 1.1, H, 2.4); this.collider(-1.1, 0, 0.4, 1.1, H, 2.4);
-      for (const [a, b] of [[-1.1, -0.95], [0.95, 1.1]]) { this.box(tint, a, H, 0.4, b, H + 0.9, 2.4); this.collider(a, H, 0.4, b, H + 0.9, 2.4); }
-      for (const x of [-1.0, 0.88]) this.box(tint, x, H, 0.3, x + 0.12, H + 2.3, 0.5);
-      this.box(tint, -1.0, H + 2.2, 0.3, 1.0, H + 2.4, 0.5);
+      for (const [a, b] of [[-1.1, -0.95], [0.95, 1.1]]) { this.box(plastic, a, H, 0.4, b, H + 0.9, 2.4); this.collider(a, H, 0.4, b, H + 0.9, 2.4); }
+      for (const x of [-1.0, 0.88]) this.box(plastic, x, H, 0.3, x + 0.12, H + 2.3, 0.5);
+      this.box(plastic, -1.0, H + 2.2, 0.3, 1.0, H + 2.4, 0.5);
       this.glowSign(String(this.opts.num || 1), glow, 0.5, 0.4, H + 2.0, 0.52);
       const drop = H - 0.55, l = Math.hypot(len, drop), ang = Math.atan2(drop, len), cy = (H + 0.55) / 2 - 0.02, cz = 0.4 - len / 2;
-      this.add(xf(new THREE.BoxGeometry(1.6, 0.08, l), { y: cy, z: cz, rx: -ang }), tint);
-      for (const x of [-0.8, 0.8]) this.add(xf(new THREE.BoxGeometry(0.1, 0.5, l), { x, y: cy + 0.22, z: cz, rx: -ang }), tint);
-      P.water = this.add(xf(new THREE.PlaneGeometry(1.45, l), { y: cy + 0.05, z: cz, rx: -Math.PI / 2 - ang }), glowMat(glow, { fog: false }));
-      P.water.material.color.multiplyScalar(0.6);
+      // the chute: a solid plastic bed, plastic side walls, and the surface you ride on
+      this.add(xf(new THREE.BoxGeometry(1.6, 0.08, l), { y: cy, z: cz, rx: -ang }), plastic);
+      for (const x of [-0.8, 0.8]) this.add(xf(new THREE.BoxGeometry(0.1, 0.5, l), { x, y: cy + 0.22, z: cz, rx: -ang }), plastic);
+      P.chute = this.add(xf(new THREE.PlaneGeometry(1.45, l), { y: cy + 0.055, z: cz, rx: -Math.PI / 2 - ang }), plastic);
       this.box(tint, -1.5, 0, -len - 1.3, 1.5, 2.4, -len - 0.2); this.collider(-1.5, 0, -len - 1.3, 1.5, 2.4, -len - 0.2);
       this.add(xf(new THREE.PlaneGeometry(1.5, 1.5), { y: 1.15, z: -len - 0.19 }), glowMat('#000000'));
     }
   }
+  /**
+   * A narrow stair shaft: ONE stairwell, every flight of it. Two lanes of concrete
+   * stairs climb side by side in a 2.2 m well with a spine wall between them, turning
+   * on a landing at each end, and the stairwell door at the top. Walls on all four
+   * sides, so there is nothing to fall off and nothing else in the shaft to walk to:
+   * the climb is the level.
+   *
+   *   opts.flights   how many flights of stairs (rounded to an even number, min 2)
+   *   opts.rise      metres gained per flight (min 2.2, so headroom is never tight)
+   *
+   * The shaft is built in local space: +z is the end you walk in at, -z the far end,
+   * x across the well. Everything is solid and every step is a real step.
+   */
+  buildStairwell(P, wall, glow) {
+    const F = Math.max(2, 2 * Math.round((this.opts.flights || 6) / 2));
+    const R = Math.max(2.2, this.opts.rise || 2.8);
+    const n = Math.max(8, Math.round(R / 0.25));      // steps per flight (0.25 m risers)
+    const riser = R / n, SL = 5.2, run = SL / n;
+    const half = 1.1, wt = 0.22;                      // interior half-width (2.2 m across) and wall thickness
+    const zEnd = SL / 2, zOuter = zEnd + 1.3;         // flight ends, and the wall beyond the landings
+    const yTop = F * R, roof = yTop + 2.5;
+    const spine = 0.06;                               // half the thickness of the wall between the lanes
+    const doorW = 0.55;
+
+    // the floor of the shaft, and the walls that climb the whole way with it
+    this.box('concrete', -half - wt, -0.1, -zOuter - wt, half + wt, 0.005, zOuter + wt);
+    this.collider(-half - wt, -0.1, -zOuter - wt, half + wt, 0.005, zOuter + wt);
+    for (const sx of [-1, 1]) {
+      this.box(wall, sx * half, 0, -zOuter - wt, sx * (half + wt), roof, zOuter + wt);
+      this.collider(sx * half, 0, -zOuter - wt, sx * (half + wt), roof, zOuter + wt);
+    }
+    this.box(wall, -half - wt, 0, -zOuter - wt, half + wt, roof, -zOuter);
+    this.collider(-half - wt, 0, -zOuter - wt, half + wt, roof, -zOuter);
+    // the spine wall, flights only (the landings run right across the well)
+    this.box(wall, -spine, 0, -zEnd, spine, roof, zEnd);
+    this.collider(-spine, 0, -zEnd, spine, roof, zEnd);
+    // the end you walk in at: a ground-level doorway, and the stairwell door above it
+    const lintel = 2.3;
+    this.box(wall, -half - wt, lintel, zOuter, -doorW, roof, zOuter + wt);
+    this.box(wall, doorW, lintel, zOuter, half + wt, roof, zOuter + wt);
+    this.box(wall, -doorW, lintel, zOuter, doorW, yTop, zOuter + wt);
+    this.box(wall, -doorW, yTop + 2.17, zOuter, doorW, roof, zOuter + wt);
+    for (const [a, b] of [[-half - wt, -doorW], [doorW, half + wt]]) this.collider(a, lintel, zOuter, b, roof, zOuter + wt);
+    this.collider(-doorW, lintel, zOuter, doorW, yTop, zOuter + wt);
+    this.collider(-doorW, yTop + 2.17, zOuter, doorW, roof, zOuter + wt);
+
+    // the flights: even ones climb down the left lane, odd ones back up the right
+    for (let k = 0; k < F; k++) {
+      const dir = k % 2 === 0 ? -1 : 1;
+      const x0 = dir < 0 ? -half : spine, x1 = dir < 0 ? -spine : half;
+      const base = k * R;
+      for (let i = 0; i < n; i++) {
+        const a = (dir < 0 ? zEnd : -zEnd) - dir * i * run, b = (dir < 0 ? zEnd : -zEnd) - dir * (i + 1) * run;
+        const za = Math.min(a, b), zb = Math.max(a, b), top = base + (i + 1) * riser;
+        this.box('concrete', x0, base - 0.32, za, x1, top, zb);
+        this.collider(x0, base - 0.32, za, x1, top, zb);
+      }
+      // the landing at the top of this flight, right across the well
+      const lz0 = dir < 0 ? -zOuter : zEnd, lz1 = dir < 0 ? -zEnd : zOuter, ly = (k + 1) * R;
+      this.box('concrete', -half, ly - 0.32, lz0, half, ly, lz1);
+      this.collider(-half, ly - 0.32, lz0, half, ly, lz1);
+    }
+
+    // the door at the top, in the wall you came in at, with the usual sign over it
+    this.box('void_black', -doorW, yTop, zOuter, doorW, yTop + 2.17, zOuter + 0.1);
+    this.box('metal_dark', -doorW - 0.02, yTop, zOuter, -doorW + 0.06, yTop + 2.25, zOuter + 0.12);
+    this.box('metal_dark', doorW - 0.06, yTop, zOuter, doorW + 0.02, yTop + 2.25, zOuter + 0.12);
+    P.portal = this.add(xf(new THREE.PlaneGeometry(1.06, 2.17), { y: yTop + 1.085, z: zOuter + 0.06 }), glowMat('#fffdf2', { fog: false }));
+    P.portal.rotation.y = Math.PI;
+    P.portal.visible = false;
+    P.leaf = this.pivot(-doorW + 0.03, yTop, zOuter + 0.02);
+    this.box('metal_grey', 0, 0.005, -0.025, doorW * 2 - 0.06, 2.16, 0.025, P.leaf);
+    this.box('chrome', 0.15, 1.0, 0.025, doorW * 2 - 0.12, 1.05, 0.06, P.leaf);
+    const sign = this.glowSign('STAIRS', glow, 0.55, 0.2, yTop + 2.32, zOuter + 0.13);
+    sign.rotation.y = Math.PI;
+    // the roof of the shaft: the climb is enclosed all the way to the top door
+    this.box('concrete', -half - wt, roof, -zOuter - wt, half + wt, roof + 0.3, zOuter + wt);
+    this.collider(-half - wt, roof, -zOuter - wt, half + wt, roof + 0.3, zOuter + wt);
+    this.collider(-doorW, yTop, zOuter, doorW, yTop + 2.2, zOuter + 0.1);
+  }
+
 
   get focus() {
     const t = this.type;
@@ -12081,6 +12208,7 @@ class Goal {
     else if (t === 'musicbox') { ly = 0.9; lz = 0.25; }
     else if (t === 'slide') { ly = 3.0 + 1.45; lz = 0.7; }
     else if (t === 'stairs') { ly = (this.opts.rise || 3) + 1.6; lz = -3.15; }
+    else if (t === 'stairshaft') { ly = (this.opts.rise || 2.8) * Math.max(2, 2 * Math.round((this.opts.flights || 6) / 2)) + 1.7; lz = 4.0; }
     else if (t === 'valve') { ly = 1.2; lz = 0.45; }
     else if (t === 'vending') { ly = 1.1; lz = 0.6; }
     else if (t === 'breaker_main') { ly = 1.35; }
@@ -12239,6 +12367,7 @@ class Objectives {
         for (let k = 0; k < count; k++) extra.push({ num: k + 1, hue: k + i, safe: k === right, len: def.slideLen || 8 });
       }
       if (def.goal === 'stairs') for (let k = 0; k < count; k++) extra.push({ rise: def.rise || 3, hue: i });
+      if (def.goal === 'stairshaft') for (let k = 0; k < count; k++) extra.push({ rise: def.rise || 2.8, flights: def.flights || 6, hue: i });
       if (def.choose) {
         const others = ['pool', 'red', 'forest', 'void'].filter((v) => v !== def.choose);
         rng.shuffle(others);
@@ -12310,9 +12439,9 @@ class Objectives {
   /** Stairwells and slide towers are long: they need a clear rectangle, and the ceiling above them is cut away. */
   placeBig(type, cx, cz, from, opts) {
     const w = this.world, S = w.S, sp = this.level.spawn || [16, 16];
-    const lens = type === 'slide' ? [opts.len || 8, 5, 3] : [0];
+    const lens = type === 'stairshaft' ? [0] : (type === 'slide' ? [opts.len || 8, 5, 3] : [0]);
     for (const len of lens) {
-      const rect = type === 'slide' ? [-1.5, 1.5, -(len + 1.4), 6.0] : [-1.6, 1.6, -3.6, 7.0];
+      const rect = type === 'stairshaft' ? [-1.4, 1.4, -4.4, 4.4] : (type === 'slide' ? [-1.5, 1.5, -(len + 1.4), 6.0] : [-1.6, 1.6, -3.6, 7.0]);
       const g0x = Math.floor(cx / S), g0z = Math.floor(cz / S);
       for (let r = 0; r < 18; r++) for (let dz = -r; dz <= r; dz++) for (let dx = -r; dx <= r; dx++) {
         if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
@@ -12432,6 +12561,12 @@ class Objectives {
     } else if (type === 'stairs') {
       const R = opts.rise || 3, c = Math.cos(rot), sn = Math.sin(rot);
       for (const [lz, ly] of [[-2.2, R + 2.7], [2.0, R * 0.55 + 3.0], [5.2, R * 0.1 + 3.0]]) this.world.addExtraFixture({ x: x + lz * sn, y: g.y + ly, z: z + lz * c, type: 'bulb', emit: 'omni', frame: false, color: [1.0, 0.95, 0.82], intensity: 1.6, flicker: FLICKER.STEADY, soft: 0.6, range: 9 });
+    } else if (type === 'stairshaft') {
+      const F = Math.max(2, 2 * Math.round((opts.flights || 6) / 2)), R = Math.max(2.2, opts.rise || 2.8), c = Math.cos(rot), sn = Math.sin(rot);
+      for (let k = 0; k <= F; k++) {
+        const lz = k % 2 === 0 ? -3.9 : 3.9;
+        this.world.addExtraFixture({ x: x + lz * sn, y: g.y + k * R + 1.15, z: z + lz * c, type: 'bulb', emit: 'omni', frame: false, color: [1.0, 0.95, 0.86], intensity: 1.5, flicker: FLICKER.STEADY, soft: 0.6, range: 8 });
+      }
     } else if (type === 'slide') {
       const c = Math.cos(rot), sn = Math.sin(rot);
       this.world.addExtraFixture({ x: x + 1.2 * sn, y: g.y + 5.0, z: z + 1.2 * c, type: 'bulb', emit: 'omni', frame: false, color: [0.8, 0.95, 1.0], intensity: 1.5, flicker: FLICKER.STEADY, soft: 0.6, range: 10 });
@@ -12620,7 +12755,7 @@ class Objectives {
         if (st.def.final) setTimeout(() => this.openElevator(g), 2600);
         else done();
         return;
-      case 'door_exit': case 'door_stairs': case 'door_security': case 'door_final': case 'stairs':
+      case 'door_exit': case 'door_stairs': case 'door_security': case 'door_final': case 'stairs': case 'stairshaft':
         g.state = 'done'; a.door('door'); g.play('open_door', done); return;
       case 'door_shutter': g.state = 'done'; a.door('shutter'); g.play('shutter', done); return;
       case 'hatch': g.state = 'done'; a.door('hatch'); g.play('hatch', done); return;
@@ -13935,6 +14070,16 @@ const MATS = {
   plastic_black: { tex: 'paint', colA: [0.07, 0.07, 0.075], colB: [0.2, 0.2, 0.2], params: [0.3, 0], tile: 0.5, normalScale: 0.15, grime: 0.2, roughness: 0.45 },
   plastic_blue: { tex: 'paint', colA: [0.15, 0.30, 0.60], colB: [0.2, 0.2, 0.2], params: [0.3, 0], tile: 0.5, normalScale: 0.15, grime: 0.2, roughness: 0.5 },
   plastic_orange: { tex: 'paint', colA: [0.85, 0.40, 0.10], colB: [0.2, 0.2, 0.2], params: [0.3, 0], tile: 0.5, normalScale: 0.15, grime: 0.25, roughness: 0.5 },
+  // ---------------------------------------------------------------- slide plastic
+  // Playground slides: opaque moulded plastic in the six ride colours. Smooth
+  // enough for a faint sheen off the level's lights (the env map, kept at a low
+  // intensity), nowhere near shiny enough to see through or mirror.
+  slide_grey: { tex: 'paint', colA: [0.72, 0.75, 0.79], colB: [0.52, 0.55, 0.60], params: [0.22, 0], tile: 0.7, normalScale: 0.1, grime: 0.12, roughness: 0.34, envIntensity: 0.55, reflect: true },
+  slide_red: { tex: 'paint', colA: [0.86, 0.16, 0.12], colB: [0.52, 0.09, 0.07], params: [0.22, 0], tile: 0.7, normalScale: 0.1, grime: 0.12, roughness: 0.32, envIntensity: 0.6, reflect: true },
+  slide_blue: { tex: 'paint', colA: [0.18, 0.46, 0.86], colB: [0.09, 0.27, 0.56], params: [0.22, 0], tile: 0.7, normalScale: 0.1, grime: 0.12, roughness: 0.34, envIntensity: 0.6, reflect: true },
+  slide_yellow: { tex: 'paint', colA: [0.92, 0.70, 0.16], colB: [0.60, 0.43, 0.07], params: [0.22, 0], tile: 0.7, normalScale: 0.1, grime: 0.12, roughness: 0.36, envIntensity: 0.5, reflect: true },
+  slide_green: { tex: 'paint', colA: [0.24, 0.78, 0.42], colB: [0.12, 0.48, 0.25], params: [0.22, 0], tile: 0.7, normalScale: 0.1, grime: 0.12, roughness: 0.35, envIntensity: 0.55, reflect: true },
+  slide_orange: { tex: 'paint', colA: [0.90, 0.48, 0.12], colB: [0.58, 0.29, 0.07], params: [0.22, 0], tile: 0.7, normalScale: 0.1, grime: 0.12, roughness: 0.33, envIntensity: 0.6, reflect: true },
   porcelain: { tex: 'paint', colA: [0.92, 0.92, 0.90], colB: [0.8, 0.8, 0.78], params: [0.1, 0], tile: 0.5, normalScale: 0.05, grime: 0.25, roughness: 0.15 },
   rubber_black: { tex: 'rubber', colA: [0.06, 0.06, 0.06], colB: [0.12, 0.12, 0.12], tile: 1, normalScale: 0.4, grime: 0.2 },
   // outdoor
@@ -15385,9 +15530,23 @@ const { placeWetness: placeWetness, buildWetness: buildWetness } = __mod['src/wo
 // Also used (with different parameters/materials) for several other levels.
 
 /**
- * Corruption pack: a rift in the floor. cliff = { axis: 'x'|'z', mid, length, offset, width, wobble }.
- * It runs along `axis` for `length` cells centred on `mid`, `offset` cells off the origin, and tapers
- * away at both ends, so there is always a way round it, just not a short one.
+ * Corruption pack: cuts in the level. A cut is a hole in the floor AND the ceiling, so the pale
+ * sky of the pack shows through where the level has been torn, eaten, or simply lost - and the
+ * void below is a long way down (levels with cuts set `fall: true`). Coordinates are grid cells
+ * (2 m): `axis` is the direction a cut runs in, `mid` the cell it is centred on along it,
+ * `offset` how far off the origin it lies across it, `width` how wide it opens, `wobble` how
+ * far the edge may wander.
+ *
+ *   { kind: 'rift',    axis, mid, length, offset, width, wobble }
+ *        a tear that tapers away at both ends, so there is always a way round it, just not a
+ *        short one. Still accepted on its own as the generator param `cliff`.
+ *   { kind: 'canyon',  axis, mid, length, offset, width, wobble, bridges, bridgeSpan, jag }
+ *        a wide trench with stepped walls, crossed by solid rock every `bridges` times.
+ *   { kind: 'crevice', axis, mid, length, offset, width, wobble, runs, spacing }
+ *        one or more long, narrow slits: easy to walk past, easier to fall into.
+ *   { kind: 'block',   x, z, w, h, shards }
+ *        a rectangular piece of the level cut straight out of the file: hard edges, and
+ *        fragments of floor left hanging in the hole (`shards` = slabs per cell, default 0.12).
  */
 function riftCell(world, c, gx, gz) {
   const u = c.axis === 'z' ? gz : gx, v = c.axis === 'z' ? gx : gz;
@@ -15398,6 +15557,108 @@ function riftCell(world, c, gx, gz) {
   const taper = 1 - Math.pow(du / half, 2.5);
   const w = c.width * (0.55 + 0.9 * fbm2(seed + 47, u * 0.16, 3.1, 2)) * taper + (hashf(seed, gx, gz, 9) - 0.5) * 1.6;
   return Math.abs(v - centre) < w;
+}
+
+/** A canyon: wide, steep, torn in whole cells, with crossings of solid rock in it. */
+function canyonCell(world, c, gx, gz) {
+  const u = c.axis === 'z' ? gz : gx, v = c.axis === 'z' ? gx : gz;
+  const half = c.length / 2, du = Math.abs(u - c.mid);
+  if (du >= half) return false;
+  const seed = world.seed ^ world.levelSalt;
+  const jag = c.jag === undefined ? 3 : c.jag;
+  const centre = c.offset + Math.round((fbm2(seed + 61, u * 0.05, 2.7, 2) - 0.5) * jag * 2);
+  const taper = Math.max(0.18, 1 - Math.pow(du / half, 3));
+  const w = c.width * (0.8 + 0.35 * fbm2(seed + 71, u * 0.09, 5.3, 2)) * taper;
+  if (Math.abs(v - centre) > w / 2) return false;
+  const bridges = c.bridges || 0;
+  if (bridges > 0) {
+    // rock bridges, so the far side of the canyon is always reachable on foot
+    const pitch = Math.max(10, Math.round(c.length / (bridges + 1)));
+    if (Math.round(u - c.mid + half) % pitch < (c.bridgeSpan || 4)) return false;
+  }
+  return true;
+}
+
+/** A crevice: one or more long, narrow slits in the floor. */
+function creviceCell(world, c, gx, gz) {
+  const u = c.axis === 'z' ? gz : gx, v = c.axis === 'z' ? gx : gz;
+  const seed = world.seed ^ world.levelSalt;
+  if (c.length && Math.abs(u - c.mid) >= c.length / 2) return false;
+  const runs = Math.max(1, c.runs || 1), spacing = c.spacing || 16;
+  for (let r = 0; r < runs; r++) {
+    const centre = c.offset + r * spacing + (fbm2(seed + 17 + r * 11, u * 0.06, 1.9, 2) - 0.5) * (c.wobble || 9);
+    const w = (c.width || 0.8) * (0.6 + 0.8 * fbm2(seed + 29 + r * 5, u * 0.19, 4.4, 2));
+    if (Math.abs(v - centre) < w / 2) return true;
+  }
+  return false;
+}
+
+/** A block: a rectangular piece of the level cut out, file-corruption style. */
+function blockCell(world, c, gx, gz) {
+  return gx >= c.x && gx < c.x + c.w && gz >= c.z && gz < c.z + c.h;
+}
+
+/** Every cut a level declares: `cuts` (an array), or the single legacy `cliff`. */
+function cutsOf(P) { return P.cuts && P.cuts.length ? P.cuts : (P.cliff ? [P.cliff] : null); }
+
+/** Is this cell inside any of the level's cuts? */
+function cutCell(world, cut, gx, gz) {
+  switch (cut.kind) {
+    case 'canyon': return canyonCell(world, cut, gx, gz);
+    case 'crevice': return creviceCell(world, cut, gx, gz);
+    case 'block': return blockCell(world, cut, gx, gz);
+    default: return riftCell(world, cut, gx, gz);
+  }
+}
+
+function inCut(world, P, gx, gz) {
+  const cuts = cutsOf(P);
+  if (!cuts) return false;
+  for (const c of cuts) if (cutCell(world, c, gx, gz)) return true;
+  return false;
+}
+
+/**
+ * The edges and the debris of the cuts: the broken slab edge along every cut (a dark lip a
+ * metre deep, so a canyon reads as a trench in a real floor and not as a hole in a sheet of
+ * paper), and slabs of floor still hanging in the hole of a block cut - the pieces a broken
+ * file could not delete (with `shards: true` on a canyon or crevice, a few down its side).
+ */
+function buildCutEdges(world, l, b, P, H) {
+  if (!l.void) return;
+  const cuts = cutsOf(P);
+  const S = world.S, N = world.N, seed = world.seed ^ world.levelSalt;
+  // the lip of every slab that touches a cut, including across a chunk boundary
+  const voidAt = (i, j) => (i >= 0 && j >= 0 && i < N && j < N
+    ? l.void[i + j * N]
+    : (inCut(world, P, l.gx0 + i, l.gz0 + j) ? 1 : 0));
+  const r = 0.42, d = -1.05;
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+    if (l.void[i + j * N]) continue;
+    const x = (l.gx0 + i) * S, z = (l.gz0 + j) * S;
+    if (voidAt(i + 1, j)) b.box(P.wallMat, x + S - r, d, z, x + S, 0.02, z + S, {});
+    if (voidAt(i - 1, j)) b.box(P.wallMat, x, d, z, x + r, 0.02, z + S, {});
+    if (voidAt(i, j + 1)) b.box(P.wallMat, x, d, z + S - r, x + S, 0.02, z + S, {});
+    if (voidAt(i, j - 1)) b.box(P.wallMat, x, d, z, x + S, 0.02, z + r, {});
+  }
+  if (!cuts) return;
+  for (const c of cuts) {
+    if (c.kind !== 'block' && !c.shards) continue;
+    const x0 = c.kind === 'block' ? Math.max(c.x, l.gx0) : l.gx0;
+    const x1 = c.kind === 'block' ? Math.min(c.x + c.w, l.gx0 + N) : l.gx0 + N;
+    const z0 = c.kind === 'block' ? Math.max(c.z, l.gz0) : l.gz0;
+    const z1 = c.kind === 'block' ? Math.min(c.z + c.h, l.gz0 + N) : l.gz0 + N;
+    if (x1 <= x0 || z1 <= z0) continue;
+    const count = Math.round((x1 - x0) * (z1 - z0) * (c.shards === undefined ? 0.12 : c.shards));
+    for (let k = 0; k < count; k++) {
+      const r1 = hashf(seed, c.x + k * 7 + x0, c.z + k * 13 + z0, 3);
+      const r2 = hashf(seed, c.x - k * 5 + z0, c.z + k * 3 + x0, 11);
+      const cx = (x0 + r1 * (x1 - x0) + 0.5) * S, cz = (z0 + r2 * (z1 - z0) + 0.5) * S;
+      const w = 0.6 + r2 * 1.6, d = 0.6 + r1 * 1.6, y = -0.9 - r1 * 3.2, t = 0.1 + r2 * 0.1;
+      b.box(P.wallMat, cx - w / 2, y - t, cz - d / 2, cx + w / 2, y + t, cz + d / 2, {});
+      if (r1 > 0.62 && y > -2.6 && r2 > 0.4) b.box(P.ceilMat, cx - w * 0.4, y + 2.2, cz - d * 0.4, cx + w * 0.4, y + 2.2 + t, cz + d * 0.4, {});
+    }
+  }
 }
 
 function makeLobbyGen(p = {}) {
@@ -15436,7 +15697,7 @@ function makeLobbyGen(p = {}) {
     params: P,
 
     init(world, level) {
-      if (!P.cliff) return;
+      if (!cutsOf(P)) return;
       this.sky = __mod['src/world/gen/open.js'].makeSky(level);
       world.scene.add(this.sky);
     },
@@ -15448,7 +15709,8 @@ function makeLobbyGen(p = {}) {
       initEdges(world, l);
       const N = world.N, S = world.S;
       const gx0 = l.gx0, gz0 = l.gz0;
-      const isVoid = P.cliff ? (gx, gz) => riftCell(world, P.cliff, gx, gz) : () => false;
+      const cuts = cutsOf(P);
+      const isVoid = cuts ? (gx, gz) => inCut(world, P, gx, gz) : () => false;
       const seed = world.seed ^ world.levelSalt;
       const zone = fbm2(seed + 11, (l.cx + 0.5) * 0.35, (l.cz + 0.5) * 0.35, 3);
       const density = P.density[0] + (P.density[1] - P.density[0]) * zone;
@@ -15511,9 +15773,9 @@ function makeLobbyGen(p = {}) {
           if (j > 5) setH(world, l, i, j, EDGE.OPEN);
         }
       }
-      // --- the rift: no floor, no walls, and nothing may path into it
+      // --- the cuts: no floor, no ceiling, no walls, and nothing may path into them
       let blocked = null;
-      if (P.cliff) {
+      if (cuts) {
         blocked = l.void = new Uint8Array(N * N);
         for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
           const gx = gx0 + i, gz = gz0 + j, v = isVoid(gx, gz);
@@ -15641,16 +15903,21 @@ function makeLobbyGen(p = {}) {
       // fixtures flagged frame:false are not ceiling troffers (see features.js)
       for (const fx of l.fixtures) if (fx.frame !== false) buildTroffer(b, fx, H, P.frameMat, P.fixtureMat);
       buildFeatures(world, l, b, ctx, P);
+      buildCutEdges(world, l, b, P, H);
       buildWetness(world, l, b);
       // flooded levels (the Poolrooms): one sheet of water over every floor
       if (P.flood) {
         const x0 = l.gx0 * S, z0 = l.gz0 * S, sz = N * S;
-        b.quad(P.waterMat || 'pool_water', x0, P.flood, z0 + sz, sz, 0, 0, 0, 0, -sz, { nu: 8, nv: 8 });
+        if (!l.void) b.quad(P.waterMat || 'pool_water', x0, P.flood, z0 + sz, sz, 0, 0, 0, 0, -sz, { nu: 8, nv: 8 });
+        else for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+          if (l.void[i + j * N]) continue;                       // the water runs away into the cut
+          b.quad(P.waterMat || 'pool_water', (l.gx0 + i) * S, P.flood, (l.gz0 + j + 1) * S, S, 0, 0, 0, 0, -S, { uv: 'unit' });
+        }
       }
     },
 
     groundAt(world, x, z) {
-      if (P.cliff && riftCell(world, P.cliff, Math.floor(x / world.S), Math.floor(z / world.S))) return -200;
+      if (inCut(world, P, Math.floor(x / world.S), Math.floor(z / world.S))) return -200;
       if (!P.flood) return 0;
       const l = world.layoutAt(x, z);
       for (const f of l.features || []) {
@@ -15678,6 +15945,12 @@ function makeLobbyGen(p = {}) {
 
 
 __e['makeLobbyGen'] = makeLobbyGen;
+__e['cutsOf'] = cutsOf;
+__e['inCut'] = inCut;
+__e['cutCell'] = cutCell;
+__e['canyonCell'] = canyonCell;
+__e['creviceCell'] = creviceCell;
+__e['blockCell'] = blockCell;
 __e['WALL_T'] = WALL_T;
 __e['C'] = C;
   return __e;
@@ -17219,1611 +17492,100 @@ __e['makeSky'] = makeSky;
 __e['WATER_Y'] = WATER_Y;
   return __e;
 })();
-__mod['src/levels/phobia.js'] = (function () {
-  const __e = {};
-const { makeLobbyGen: makeLobbyGen } = __mod['src/world/gen/lobby.js'];
-const { makeForestGen: makeForestGen } = __mod['src/world/gen/forest.js'];
-const { makeOpenGen: makeOpenGen } = __mod['src/world/gen/open.js'];
-const { PROP_SETS: PROP_SETS } = __mod['src/world/props.js'];
-const { ITEM_NAMES: ITEM_NAMES } = __mod['src/game/loot.js'];
-// THE PHOBIA WING: forty-four levels, one for each fear, each with a creature
-// of its own. They form a second track beside the main campaign: the first
-// opens once Level 0 is escaped, each one after that opens the next.
-//
-// Extra level fields used here:
-//   track: 'phobia'       which unlock chain the level belongs to
-//   phobia: { meters, hazards, clock, coffee, heaters }   see phobia/system.js
-//   fall: true            falling off the world kills instead of resetting
-//   photo                 hints for the loading-screen photograph
-
-ITEM_NAMES.fuse = 'Fuse';
-ITEM_NAMES.reel = 'Film Reel';
-
-// ------------------------------------------------------------------ extra furniture sets
-Object.assign(PROP_SETS, {
-  attic: {
-    wall: [['C:dresser', 0.03], ['shelf', 0.03], ['C:cabinet', 0.01, 1.15, { mat: 'wood_dark' }], ['lamp_floor', 0.006]],
-    floor: [['box_stack', [2, 5]], ['box_cardboard', [2, 5], (rng) => ({ w: rng.range(0.35, 0.7), d: rng.range(0.3, 0.55), h: rng.range(0.25, 0.5) })], ['C:box', [1, 3]], ['chair_office', [0, 2], { fabric: 'fabric_brown' }], ['mattress', [0, 1]]],
-  },
-  greenhouse: {
-    wall: [['C:cabinet', 0.012, 1.15, { mat: 'metal_green' }], ['shelf', 0.03], ['pipe_cluster', 0.02, 0.3]],
-    floor: [['planter', [5, 10]], ['pallet', [0, 2]], ['barrel', [0, 2]], ['C:crate', [0, 2]], ['table', [0, 2]]],
-  },
-  nursery: {
-    wall: [['bed', 0.03], ['C:dresser', 0.03], ['C:nightstand', 0.03], ['lamp_floor', 0.01], ['balloons', 0.01, 0, () => ({ top: 2.0 })]],
-    floor: [['C:present', [1, 3], (rng) => ({ mat: rng.pick(['gift_red', 'gift_blue', 'gift_green']) })], ['chair_plastic', [1, 3]], ['C:box', [0, 2]], ['table', [0, 1]]],
-  },
-  morgue: {
-    wall: [['C:filing', 0.03, 0, { mat: 'metal_white' }], ['C:cabinet', 0.02, 1.15, { cross: true, mat: 'metal_white' }], ['sink_counter', 0.01], ['locker_row', 0.008]],
-    floor: [['gurney', [2, 5]], ['iv_stand', [0, 2]], ['wheelchair', [0, 1]], ['C:box', [0, 2]]],
-  },
-  library: {
-    wall: [['shelf', 0.2], ['C:filing', 0.02, 0, { mat: 'wood_dark' }], ['C:cabinet', 0.01, 1.15, { mat: 'wood_dark' }], ['clock_wall', 0.006, 2.1]],
-    floor: [['desk_set', [2, 5]], ['table', [1, 3]], ['chair_office', [1, 3], { fabric: 'fabric_green' }], ['C:box', [0, 2]], ['box_stack', [0, 2]]],
-  },
-  server: {
-    wall: [['server_rack', 0.12], ['electrical_panel', 0.05], ['C:cabinet', 0.01, 1.15, { mat: 'metal_dark' }], ['C:locker', 0.01, 0, { mat: 'metal_grey' }]],
-    floor: [['server_rack', [2, 6]], ['desk_set', [0, 2]], ['C:box', [0, 2]], ['box_stack', [0, 2]]],
-  },
-  theater: {
-    wall: [['painting', 0.04, 1.55], ['lamp_floor', 0.02], ['C:cabinet', 0.012, 1.15, { mat: 'wood_dark' }], ['couch', 0.01]],
-    floor: [['pedestal', [2, 5]], ['rope_posts', [1, 3]], ['bench', [1, 3], { mat: 'wood_dark' }], ['C:crate', [0, 2]]],
-  },
-  clockwork: {
-    wall: [['clock_wall', 0.08, 1.9], ['C:cabinet', 0.015, 1.15, { mat: 'wood_dark' }], ['shelf', 0.03], ['C:dresser', 0.01]],
-    floor: [['table', [1, 3]], ['chair_office', [0, 2], { fabric: 'fabric_brown' }], ['C:box', [0, 2]], ['box_stack', [0, 1]]],
-  },
-  kitchen: {
-    wall: [['vending_machine', 0.03], ['C:counter', 0.03], ['sink_counter', 0.03], ['C:cabinet', 0.02, 1.15, { mat: 'metal_white' }]],
-    floor: [['table_set', [2, 5]], ['trash_bin', [1, 3]], ['C:box', [0, 2]], ['shopping_cart', [0, 1]]],
-  },
-  hive: {
-    wall: [['pipe_cluster', 0.03, 0.3], ['C:cabinet', 0.01, 1.15, { mat: 'metal_rust' }], ['C:vent', 0.03]],
-    floor: [['barrel', [1, 3]], ['pallet', [1, 2]], ['C:crate', [0, 2]], ['box_stack', [0, 2]]],
-  },
-  abattoir: {
-    wall: [['pipe_cluster', 0.03, 0.3], ['C:locker', 0.015, 0, { mat: 'metal_grey' }], ['electrical_panel', 0.02], ['sink_counter', 0.01]],
-    floor: [['gurney', [0, 2]], ['barrel', [1, 3]], ['C:crate', [0, 2]], ['C:toolbox', [0, 1]], ['pallet', [0, 2]]],
-  },
-});
-
-const lobby = (o) => () => makeLobbyGen(o);
-const NIGHT = { top: 0x01020a, horizon: 0x141a26, glow: 0x05070c, stars: 0.6, clouds: 0.5 };
-
-const L = [];
-const add = (n, o) => { L.push({ track: 'phobia', id: 'phobia' + String(n).padStart(2, '0'), name: `Φ-${String(n).padStart(2, '0')}`, seed: 5000 + n * 37, spawn: [16, 16], ...o }); };
-
-// ------------------------------------------------------------------ 1 Arachnophobia
-add(1, {
-  subtitle: 'Arachnophobia', place: 'The Attic That Never Ends', cls: 'Class 3',
-  description: 'Low rafters, boxes nobody unpacked, and webs strung across every doorway.',
-  intro: 'Three fuses are hidden in the boxes. Put them in the fuse box and leave. Look up before you walk under anything.',
-  ambientLight: [0.02, 0.017, 0.012], bounce: 0.3, lightRange: 14,
-  fog: { color: 0x1a140c, density: 0.045 }, tuning: { grimeScale: 1.6, wetScale: 0.3 },
-  gen: lobby({ height: 2.6, wallMat: 'plaster_old', floorMat: 'wood_floor', ceilMat: 'ceiling_dirty', fixtureMat: 'fixture_bulb', frameMat: 'wood_dark', fixtureColor: [1.0, 0.78, 0.5], fixtureIntensity: 2.4,
-    density: [0.3, 0.65], roomChance: 0.55, doorwayChance: 0.2, deadChance: 0.18, flickerChance: 0.1, darkZones: 0.4, missingTileChance: 0.02,
-    featureWeights: { pool: 0, glass: 0.2, collapse: 1.2, exit: 0.6, blackout: 1.2 }, props: 'attic' }),
-  stages: [
-    { text: 'Find the fuses', hint: 'Search boxes and dressers', item: 'fuse', count: 3, dist: [22, 50] },
-    { text: 'Replace the fuses', goal: 'breaker', dist: [35, 50] },
-    { text: 'Get out through the attic hatch', goal: 'hatch', dist: [40, 60], from: 'prev', final: true },
-  ],
-  entities: [['weaver', 5]], rare: [['crawler', 0.2]],
-  loot: { keys: 10, water: 5, batteries: 5 },
-  phobia: { hazards: ['webs'] },
-});
-
-// ------------------------------------------------------------------ 2 Ophidiophobia
-add(2, {
-  subtitle: 'Ophidiophobia', place: 'The Reptile House', cls: 'Class 4',
-  description: 'Steamy tiled enclosures, heat lamps, glass tanks with the lids off. The vivarium was never meant to be this big.',
-  intro: 'Kill the three heat-lamp breakers so it gets sluggish, then find the service hatch. Walk softly.',
-  wet: true, hum: 0.06,
-  ambientLight: [0.016, 0.026, 0.014], bounce: 0.3, lightRange: 16,
-  fog: { color: 0x101a0c, density: 0.042 }, tuning: { grimeScale: 1.4, wetScale: 1.5 },
-  gen: lobby({ height: 3.0, wallMat: 'wall_tile_green', floorMat: 'floor_tile', ceilMat: 'ceiling_dirty', fixtureMat: 'fixture_green', frameMat: 'metal_grey', fixtureColor: [0.8, 1.0, 0.6], fixtureIntensity: 2.8,
-    density: [0.2, 0.5], roomChance: 0.5, doorwayChance: 0.15, deadChance: 0.1, flickerChance: 0.08, darkZones: 0.3,
-    featureWeights: { pool: 1.5, glass: 1.4, collapse: 0.4, exit: 0.6, blackout: 0.8 }, props: 'greenhouse' }),
-  stages: [
-    { text: 'Turn off the heat lamps', goal: 'breaker', count: 3, dist: [22, 52] },
-    { text: 'Climb out through the service hatch', goal: 'hatch', dist: [45, 65], final: true },
-  ],
-  entities: [['coil', 2]], rare: [['deathmoth', 0.3]],
-  loot: { keys: 10, water: 5, batteries: 3 },
-});
-
-// ------------------------------------------------------------------ 3 Cynophobia
-add(3, {
-  subtitle: 'Cynophobia', place: 'Beware of the Dog', cls: 'Class 4', hum: 0,
-  description: 'A night suburb where every gate is open and every yard has a chain with nothing on the end of it.',
-  intro: 'The house key is in a mailbox. Find the house. Do NOT run when they circle you.',
-  spawn: [16, 1.6], outdoor: true, ambience: 'suburbs', surface: () => 'grass',
-  ambientLight: [0.03, 0.036, 0.055], bounce: 0.22, lightRange: 18,
-  fog: { color: 0x0a0d14, density: 0.03 }, tuning: { grimeScale: 0.6, wetScale: 0.8 },
-  sky: { ...NIGHT, clouds: 0.6 }, envLamps: [[2.5, 1.6, 0.8]],
-  gen: () => makeOpenGen('suburbs'),
-  stages: [
-    { text: 'Find the house key', hint: 'Search the mailboxes', item: 'housekey', dist: [30, 55] },
-    { text: 'Unlock the front door', goal: 'door_exit', dist: [45, 65], final: true },
-  ],
-  entities: [['goodboy', 5]], rare: [['hound', 0.3]],
-  loot: { keys: 12, water: 6, batteries: 4 },
-});
-
-// ------------------------------------------------------------------ 4 Ornithophobia
-add(4, {
-  subtitle: 'Ornithophobia', place: 'The Rookery Fields', cls: 'Class 3', hum: 0,
-  description: 'Wheat under a low grey sky, and on every fence, every barn roof, every scarecrow: crows.',
-  intro: 'Start the two pump generators, then get down the grain hatch. When the circle tightens: crouch, freeze.',
-  spawn: [2, 16], outdoor: true, cover: true, ambience: 'field', surface: () => 'grass',
-  ambientLight: [0.22, 0.22, 0.24], bounce: 0.22, lightRange: 18,
-  fog: { color: 0x5a5c60, density: 0.02 }, tuning: { grimeScale: 0.3, wetScale: 0.8 },
-  sky: { top: 0x3a3d44, horizon: 0x7a7c80, glow: 0x000000, stars: 0, moon: false, clouds: 0.95 },
-  gen: () => makeOpenGen('field'),
-  stages: [
-    { text: 'Start the pump generators', goal: 'generator', count: 2, dist: [30, 60] },
-    { text: 'Find the grain hatch', goal: 'hatch', dist: [55, 75], final: true },
-  ],
-  entities: [['murder', 3]], rare: [['stature', 0.25]],
-  loot: { keys: 12, water: 6, batteries: 3 },
-});
-
-// ------------------------------------------------------------------ 5 Ailurophobia
-add(5, {
-  subtitle: 'Ailurophobia', place: 'The Cat Lady\'s Flat', cls: 'Class 4',
-  description: 'Endless rooms of a single old apartment: green wallpaper, saucers of milk gone solid, scratch marks at shoulder height.',
-  intro: 'Find the spare key to number 9, then take the lift. Turn around. Often.',
-  ambientLight: [0.02, 0.024, 0.016], bounce: 0.3, lightRange: 15,
-  fog: { color: 0x141810, density: 0.04 }, tuning: { grimeScale: 1.2, wetScale: 0.3 },
-  gen: lobby({ height: 2.6, wallMat: 'damask_green', floorMat: 'carpet_green', ceilMat: 'ceiling_dirty', fixtureMat: 'fixture_bulb', frameMat: 'wood_dark', fixtureColor: [1.0, 0.82, 0.58], fixtureIntensity: 2.6,
-    density: [0.35, 0.7], roomChance: 0.75, doorwayChance: 0.2, deadChance: 0.12, flickerChance: 0.08, darkZones: 0.35,
-    featureWeights: { pool: 0, glass: 0, collapse: 0.4, exit: 0.6, blackout: 1.0 }, props: 'hotel' }),
-  stages: [
-    { text: 'Find the spare key', hint: 'Nightstands and dressers', item: 'roomkey', dist: [35, 55] },
-    { text: 'Reach the lift', goal: 'elevator', dist: [50, 70], final: true },
-  ],
-  entities: [['ninelives', 2]], rare: [['whisperer', 0.2]],
-  loot: { keys: 10, water: 5, batteries: 4 },
-});
-
-// ------------------------------------------------------------------ 6 Phasmophobia
-add(6, {
-  subtitle: 'Phasmophobia', place: 'The Wake', cls: 'Class 4', hum: 0.02,
-  description: 'A funeral home after hours: velvet, lilies, rows of chairs facing an empty casket. The lights do not stay on long.',
-  intro: 'Light the four memorial candles and leave by the side door. When the lights flicker, find her with your torch.',
-  ambientLight: [0.012, 0.01, 0.01], bounce: 0.3, lightRange: 14,
-  fog: { color: 0x0e0a0a, density: 0.05 }, tuning: { grimeScale: 1.0, wetScale: 0.3 }, flashes: [26, 44],
-  gen: lobby({ height: 2.9, wallMat: 'damask_hotel', floorMat: 'carpet_red', ceilMat: 'ceiling_dirty', fixtureMat: 'fixture_bulb', frameMat: 'wood_dark', fixtureColor: [1.0, 0.76, 0.52], fixtureIntensity: 2.2,
-    density: [0.25, 0.55], roomChance: 0.7, doorwayChance: 0.25, deadChance: 0.3, flickerChance: 0.2, strobeChance: 0.03, dyingChance: 0.08, darkZones: 0.5,
-    featureWeights: { pool: 0, glass: 0.2, collapse: 0.4, exit: 0.5, blackout: 1.5 }, props: 'theater' }),
-  stages: [
-    { text: 'Light the memorial candles', goal: 'lantern', count: 4, dist: [20, 50] },
-    { text: 'Leave by the side door', goal: 'door_exit', dist: [45, 60], final: true },
-  ],
-  entities: [['revenant', 2]], rare: [['whisperer', 0.3]],
-  loot: { keys: 10, water: 5, batteries: 8 },
-});
-
-// ------------------------------------------------------------------ 7 Pediophobia
-add(7, {
-  subtitle: 'Pediophobia', place: 'The Nursery', cls: 'Class 4',
-  description: 'Rose wallpaper, little beds, a hundred tea parties nobody finished. The dolls are always facing you.',
-  intro: 'Wind the three music boxes to put the nursery to sleep, then take the stairs. Do not look away. You will have to blink.',
-  ambientLight: [0.026, 0.02, 0.022], bounce: 0.34, lightRange: 16,
-  fog: { color: 0x1c1418, density: 0.036 }, tuning: { grimeScale: 0.8, wetScale: 0.2 },
-  gen: lobby({ height: 2.7, wallMat: 'wallpaper_rose', floorMat: 'carpet_hotel_blue', ceilMat: 'ceiling_white', fixtureMat: 'fixture_bulb', frameMat: 'metal_white', fixtureColor: [1.0, 0.86, 0.74], fixtureIntensity: 2.8,
-    density: [0.3, 0.6], roomChance: 0.75, doorwayChance: 0.22, deadChance: 0.08, flickerChance: 0.08, darkZones: 0.25,
-    featureWeights: { pool: 0, glass: 0.3, collapse: 0.3, exit: 0.6, blackout: 0.8 }, props: 'nursery' }),
-  stages: [
-    { text: 'Wind the music boxes', goal: 'musicbox', count: 3, dist: [22, 50] },
-    { text: 'Take the stairs down', goal: 'door_stairs', dist: [40, 60], from: 'prev', final: true },
-  ],
-  entities: [['porcelain', 8]], rare: [],
-  loot: { keys: 10, water: 5, batteries: 4 },
-  phobia: { hazards: ['blink'] },
-});
-
-// ------------------------------------------------------------------ 8 Automatonophobia
-add(8, {
-  subtitle: 'Automatonophobia', place: 'The Showroom After Close', cls: 'Class 4',
-  description: 'An exhibition hall of animatronics and wax figures with the power almost gone. Some exhibits have left their plinths.',
-  intro: 'Throw the three stage-light breakers, then raise the loading shutter. Keep your flashlight on the Showman. Save your batteries.',
-  ambientLight: [0.01, 0.008, 0.008], bounce: 0.28, lightRange: 14,
-  fog: { color: 0x0e0808, density: 0.045 }, tuning: { grimeScale: 1.0, wetScale: 0.3 },
-  gen: lobby({ height: 3.6, wallMat: 'gallery_red', floorMat: 'wood_floor', ceilMat: 'void_black', fixtureMat: 'fixture_red', frameMat: 'metal_dark', fixtureColor: [1.0, 0.4, 0.3], fixtureIntensity: 2.2,
-    density: [0.15, 0.4], roomChance: 0.85, doorwayChance: 0.25, deadChance: 0.35, flickerChance: 0.15, darkZones: 0.6,
-    featureWeights: { pool: 0, glass: 1.0, collapse: 0.3, exit: 0.6, blackout: 1.5 }, props: 'theater' }),
-  stages: [
-    { text: 'Throw the stage-light breakers', goal: 'breaker', count: 3, dist: [22, 52] },
-    { text: 'Raise the loading shutter', goal: 'door_shutter', dist: [50, 70], final: true },
-  ],
-  entities: [['showman', 3], ['mannequin', 3]], rare: [['stature', 0.2]],
-  loot: { keys: 10, water: 5, batteries: 9 },
-});
-
-// ------------------------------------------------------------------ 9 Coulrophobia
-add(9, {
-  subtitle: 'Coulrophobia', place: 'The Big Top', cls: 'Class 5', ambience: 'party',
-  description: 'Striped canvas walls, sawdust, the smell of popcorn left too long. Somewhere ahead, someone is giggling.',
-  intro: 'Collect the three ringmaster\'s tickets, then leave through the performers\' exit. If you hear giggling ahead — go another way.',
-  ambientLight: [0.03, 0.022, 0.02], bounce: 0.34, lightRange: 17,
-  fog: { color: 0x22140e, density: 0.032 }, tuning: { grimeScale: 0.9, wetScale: 0.2 },
-  gen: lobby({ height: 3.2, wallMat: 'party_wall', floorMat: 'party_carpet', ceilMat: 'ceiling_dirty', fixtureMat: 'fixture_bulb', frameMat: 'metal_red', fixtureColor: [1.0, 0.82, 0.6], fixtureIntensity: 3.0,
-    density: [0.2, 0.5], roomChance: 0.6, doorwayChance: 0.2, deadChance: 0.08, flickerChance: 0.1, strobeChance: 0.03, darkZones: 0.25,
-    featureWeights: { pool: 0, glass: 0.2, collapse: 0.3, exit: 0.6, blackout: 0.6 }, props: 'party' }),
-  stages: [
-    { text: 'Collect the ringmaster\'s tickets', goal: 'artifact', count: 3, dist: [25, 55] },
-    { text: 'Leave through the performers\' exit', goal: 'door_exit', dist: [45, 65], final: true },
-  ],
-  entities: [['jester', 2]], rare: [['partygoer', 0.3]],
-  loot: { keys: 10, water: 5, batteries: 3 },
-});
-
-// ------------------------------------------------------------------ 10 Necrophobia
-add(10, {
-  subtitle: 'Necrophobia', place: 'The Cold Room', cls: 'Class 3', hum: 0.08,
-  description: 'Steel drawers, gurneys in rows, bodies under sheets. Most of them have been dead for a very long time.',
-  intro: 'The morgue keycard is in one of the cabinets. Walk slowly. Do not run past the bodies.',
-  ambientLight: [0.018, 0.024, 0.026], bounce: 0.3, lightRange: 17,
-  fog: { color: 0x10161a, density: 0.04 }, tuning: { grimeScale: 1.3, wetScale: 0.5 },
-  gen: lobby({ height: 2.8, wallMat: 'wall_tile', floorMat: 'vct_hospital', ceilMat: 'ceiling_white', fixtureMat: 'fixture_cold', frameMat: 'metal_white', fixtureColor: [0.82, 0.94, 1.0], fixtureIntensity: 3.0,
-    density: [0.2, 0.5], roomChance: 0.6, doorwayChance: 0.15, deadChance: 0.12, flickerChance: 0.12, strobeChance: 0.02, dyingChance: 0.05, darkZones: 0.3,
-    featureWeights: { pool: 0, glass: 0.6, collapse: 0.4, exit: 0.6, blackout: 1.0 }, props: 'morgue' }),
-  stages: [
-    { text: 'Find the morgue keycard', hint: 'Cabinets and filing drawers', item: 'keycard', dist: [35, 55] },
-    { text: 'Swipe out of the cold room', goal: 'door_security', dist: [45, 65], final: true },
-  ],
-  entities: [['mourner', 11]], rare: [['wretch', 0.3]],
-  loot: { keys: 10, water: 5, batteries: 3 },
-});
-
-// ------------------------------------------------------------------ 11 Aichmophobia
-add(11, {
-  subtitle: 'Aichmophobia', place: 'The Clinic', cls: 'Class 3',
-  description: 'Waiting rooms, treatment bays and sharps bins tipped out over the floor. Every floor.',
-  intro: 'Take the three trauma kits from the wall cabinets and get out. Crouch-walk over the syringes; drink to stop bleeding.',
-  ambientLight: [0.022, 0.026, 0.026], bounce: 0.32, lightRange: 18,
-  fog: { color: 0x141a19, density: 0.036 }, tuning: { grimeScale: 1.2, wetScale: 0.4 },
-  gen: lobby({ height: 2.8, wallMat: 'plaster_hospital', floorMat: 'vct_hospital', ceilMat: 'ceiling_white', fixtureMat: 'fixture_cold', frameMat: 'metal_white', fixtureColor: [0.9, 0.97, 1.0], fixtureIntensity: 3.3,
-    density: [0.3, 0.6], roomChance: 0.6, deadChance: 0.08, flickerChance: 0.08, strobeChance: 0.02, dyingChance: 0.03, darkZones: 0.3,
-    featureWeights: { pool: 0, glass: 0.8, collapse: 0.6, exit: 0.8, blackout: 1.0 }, props: 'hospital' }),
-  stages: [
-    { text: 'Collect the trauma kits', goal: 'medkit', count: 3, dist: [25, 55] },
-    { text: 'Find the clinic exit', goal: 'door_exit', dist: [50, 70], final: true },
-  ],
-  entities: [['phlebotomist', 3]], rare: [['wretch', 0.25]],
-  loot: { keys: 10, water: 8, batteries: 3 },
-  phobia: { hazards: ['needles'] },
-});
-
-// ------------------------------------------------------------------ 12 Thalassophobia
-add(12, {
-  subtitle: 'Thalassophobia', place: 'The Flooded Deep', cls: 'Class 4', hum: 0.02, ambience: 'water',
-  description: 'Black water up to your waist in tiled halls that go on forever. Things move under it. Sometimes there is a light.',
-  intro: 'Open the three drain valves, then take the stairs up. Never walk toward a light in the water.',
-  wade: true, wet: true,
-  ambientLight: [0.008, 0.012, 0.016], bounce: 0.34, lightRange: 15,
-  fog: { color: 0x05090c, density: 0.05 }, tuning: { grimeScale: 0.9, wetScale: 1.8 },
-  gen: lobby({ height: 3.6, wallMat: 'wall_tile', floorMat: 'pool_tile_blue', ceilMat: 'concrete_dark', fixtureMat: 'fixture_cold', frameMat: 'metal_rust', fixtureColor: [0.7, 0.9, 1.0], fixtureIntensity: 2.4,
-    density: [0.1, 0.3], roomChance: 0.25, pillarChance: 0.6, deadChance: 0.4, flickerChance: 0.1, darkZones: 0.55,
-    featureWeights: { pool: 2, glass: 0, collapse: 0.3, exit: 0.3, blackout: 1.4 }, props: 'pool', flood: 0.62, waterMat: 'water' }),
-  stages: [
-    { text: 'Open the drain valves', goal: 'valve', count: 3, dist: [22, 52] },
-    { text: 'Climb the stairs out of the water', goal: 'door_stairs', dist: [50, 70], final: true },
-  ],
-  entities: [['lure', 3]], rare: [['haze', 0.2]],
-  loot: { keys: 10, water: 5, batteries: 7 },
-});
-
-// ------------------------------------------------------------------ 13 Hylophobia
-add(13, {
-  subtitle: 'Hylophobia', place: 'The Deep Woods', cls: 'Class 5', hum: 0, ambience: 'forest',
-  description: 'A moonless pine forest so thick the trunks are walls. Someone is calling your name from between the trees.',
-  intro: 'Light four trail lanterns, then find the ranger\'s cabin. Keep your flashlight on and charged. Do not follow the voices.',
-  ambientLight: [0.02, 0.026, 0.04], bounce: 0.2, lightRange: 15,
-  fog: { color: 0x0a1018, density: 0.055 }, tuning: { grimeScale: 0.2, wetScale: 0.6 },
-  gen: () => makeForestGen({ treeChance: 0.2 }),
-  stages: [
-    { text: 'Light the trail lanterns', goal: 'lantern', count: 4, dist: [25, 60] },
-    { text: 'Find the ranger\'s cabin', goal: 'cabin', dist: [60, 80], final: true },
-  ],
-  entities: [['palestag', 1], ['deathmoth', 1]], rare: [['howler', 0.2]],
-  loot: { keys: 10, water: 5, batteries: 10 },
-});
-
-// ------------------------------------------------------------------ 14 Acrophobia
-add(14, {
-  subtitle: 'Acrophobia', place: 'The Catwalks', cls: 'Class 4', hum: 0,
-  description: 'Steel walkways two metres wide, hung over nothing. Clouds below. Wind. Railings, mostly.',
-  intro: 'Restart the two beacon generators on the platforms, then find the maintenance hatch. Crouch when the wind or the Updraft hits.',
-  spawn: [16, 16], outdoor: true, fall: true, ambience: 'field', surface: () => 'carpet',
-  ambientLight: [0.32, 0.34, 0.38], bounce: 0.3, lightRange: 18,
-  fog: { color: 0xb8c0cc, density: 0.024 }, tuning: { grimeScale: 0.6, wetScale: 0.4 },
-  sky: { top: 0x6a86a8, horizon: 0xc8d0dc, glow: 0x000000, stars: 0, moon: false, clouds: 0.9 },
-  gen: () => makeOpenGen('heights', { style: 'sky' }),
-  stages: [
-    { text: 'Restart the beacon generators', goal: 'generator', count: 2, dist: [20, 50] },
-    { text: 'Find the maintenance hatch', goal: 'hatch', dist: [40, 60], final: true },
-  ],
-  entities: [['updraft', 2]], rare: [],
-  loot: { keys: 12, water: 5, batteries: 2 },
-  phobia: { hazards: ['gusts'] },
-});
-
-// ------------------------------------------------------------------ 15 Megalophobia
-add(15, {
-  subtitle: 'Megalophobia', place: 'The Long Shadow', cls: 'Class 5', hum: 0,
-  description: 'Flat farmland in thick evening fog. The ground shakes every few seconds. Far off, a light sweeps the fields.',
-  intro: 'Start three irrigation pumps, then take the cellar hatch. Watch where its light lands. When it turns red: run sideways.',
-  spawn: [2, 16], outdoor: true, cover: true, ambience: 'field', surface: () => 'grass',
-  ambientLight: [0.12, 0.11, 0.12], bounce: 0.22, lightRange: 18,
-  fog: { color: 0x2a2a30, density: 0.022 }, tuning: { grimeScale: 0.3, wetScale: 0.8 },
-  sky: { top: 0x101016, horizon: 0x34343c, glow: 0x1a1008, stars: 0, moon: false, clouds: 0.9 },
-  gen: () => makeOpenGen('field'),
-  stages: [
-    { text: 'Start the irrigation pumps', goal: 'generator', count: 3, dist: [30, 60] },
-    { text: 'Get into the cellar', goal: 'hatch', dist: [55, 75], final: true },
-  ],
-  entities: [['colossus', 1]], rare: [['worm', 0.2]],
-  loot: { keys: 12, water: 6, batteries: 4 },
-});
-
-// ------------------------------------------------------------------ 16 Claustrophobia
-add(16, {
-  subtitle: 'Claustrophobia', place: 'The Crawlspace', cls: 'Class 4', hum: 0.07,
-  description: 'Service corridors barely wider than your shoulders, ceilings you could touch, pipes on every side. No windows. No air.',
-  intro: 'Shut the three gas valves, then crawl out through the hatch. Rest in the wide rooms when your PRESSURE climbs.',
-  ambientLight: [0.016, 0.014, 0.012], bounce: 0.28, lightRange: 12,
-  fog: { color: 0x0e0c0a, density: 0.05 }, tuning: { grimeScale: 1.6, wetScale: 0.8 },
-  gen: lobby({ height: 2.15, wallMat: 'concrete_block', floorMat: 'concrete_floor', ceilMat: 'concrete_dark', fixtureMat: 'fixture_cold', frameMat: 'metal_rust', fixtureColor: [0.9, 0.95, 1.0], fixtureIntensity: 2.2,
-    density: [0.6, 0.9], roomChance: 0.06, pillarChance: 0.5, doorwayChance: 0.05, fixtureEvery: 2, deadChance: 0.15, flickerChance: 0.12, darkZones: 0.3,
-    featureWeights: { pool: 0.2, glass: 0, collapse: 1.0, exit: 0.6, blackout: 1.0 }, props: 'sewer' }),
-  stages: [
-    { text: 'Shut the gas valves', goal: 'valve', count: 3, dist: [20, 48] },
-    { text: 'Crawl out through the hatch', goal: 'hatch', dist: [40, 60], final: true },
-  ],
-  entities: [['squeeze', 3]], rare: [['crawler', 0.3]],
-  loot: { keys: 10, water: 5, batteries: 4 },
-  phobia: { meters: ['pressure'] },
-});
-
-// ------------------------------------------------------------------ 17 Agoraphobia
-add(17, {
-  subtitle: 'Agoraphobia', place: 'The Overflow Lot', cls: 'Class 5', hum: 0,
-  description: 'A car park that does not end. Sodium lights, mostly dead, and a figure on the horizon in every direction you look.',
-  intro: 'Reset the two ticket machines in the bus shelters, then find the exit booth. Move from shelter to shelter. Do not linger in the open.',
-  spawn: [16, 16], outdoor: true, ambience: 'city', surface: () => 'carpet',
-  ambientLight: [0.03, 0.026, 0.024], bounce: 0.22, lightRange: 20,
-  fog: { color: 0x120e0a, density: 0.018 }, tuning: { grimeScale: 0.9, wetScale: 1.0 },
-  sky: { top: 0x04040a, horizon: 0x2a1c14, glow: 0x3a1c08, stars: 0.2, clouds: 0.5 },
-  gen: () => makeOpenGen('lot'),
-  stages: [
-    { text: 'Reset the ticket machines', goal: 'breaker', count: 2, dist: [28, 60] },
-    { text: 'Reach the exit booth', goal: 'door_exit', dist: [45, 70], final: true },
-  ],
-  entities: [['horizon', 1]], rare: [['faceling', 0.3]],
-  loot: { keys: 12, water: 6, batteries: 3 },
-});
-
-// ------------------------------------------------------------------ 18 Kenophobia
-add(18, {
-  subtitle: 'Kenophobia', place: 'The Empty Rooms', cls: 'Class 4', hum: 0.0,
-  description: 'Vast black rooms with almost nothing in them. Your footsteps do not echo. Your light does not reach the walls.',
-  intro: 'Stabilise three anchors before the emptiness swallows them, then find the door. If everything goes quiet, move.',
-  ambientLight: [0.006, 0.006, 0.008], bounce: 0.3, lightRange: 18,
-  fog: { color: 0x030305, density: 0.03 }, tuning: { grimeScale: 0.4, wetScale: 0.2 },
-  gen: lobby({ height: 4.4, wallMat: 'void_wall', floorMat: 'concrete_dark', ceilMat: 'void_black', fixtureMat: 'fixture_cold', frameMat: 'metal_dark', fixtureColor: [0.8, 0.82, 1.0], fixtureIntensity: 3.2,
-    density: [0.04, 0.14], roomChance: 0.05, pillarChance: 0.08, fixtureEvery: 3, fixtureChance: 0.6, deadChance: 0.3, flickerChance: 0.06, darkZones: 0.5,
-    featureWeights: { pool: 0, glass: 0, collapse: 0.3, exit: 0.3, blackout: 1.6 }, props: 'void' }),
-  stages: [
-    { text: 'Stabilise the anchors', goal: 'anchor', count: 3, dist: [25, 55] },
-    { text: 'Find the door out of nothing', goal: 'door_exit', dist: [45, 65], final: true },
-  ],
-  entities: [['absence', 1]], rare: [['peripheral', 0.5]],
-  loot: { keys: 10, water: 5, batteries: 5 },
-  phobia: { hazards: ['void'] },
-});
-
-// ------------------------------------------------------------------ 19 Bathophobia
-add(19, {
-  subtitle: 'Bathophobia', place: 'The Shafts', cls: 'Class 4', hum: 0.05,
-  description: 'An underground hall whose floor is broken by square shafts with no bottom. Something pale rests its fingers on the edges.',
-  intro: 'Light three lanterns along the safe aisles, then reach the lift door in a hut. Stay away from the edges.',
-  fall: true, ambience: 'water',
-  ambientLight: [0.012, 0.01, 0.008], bounce: 0.28, lightRange: 16,
-  fog: { color: 0x050403, density: 0.045 }, tuning: { grimeScale: 1.2, wetScale: 0.6 },
-  sky: { top: 0x000000, horizon: 0x020202, glow: 0x000000, stars: 0, moon: false, clouds: 0 },
-  gen: () => makeOpenGen('heights', { style: 'pits' }),
-  stages: [
-    { text: 'Light the aisle lanterns', goal: 'lantern', count: 3, dist: [20, 48] },
-    { text: 'Reach the lift door', goal: 'door_exit', dist: [40, 60], final: true },
-  ],
-  entities: [['deephand', 6]], rare: [['crawler', 0.25]],
-  loot: { keys: 12, water: 5, batteries: 5 },
-});
-
-// ------------------------------------------------------------------ 20 Scopophobia
-add(20, {
-  subtitle: 'Scopophobia', place: 'The Gallery of Eyes', cls: 'Class 4',
-  description: 'A portrait gallery where every painted face follows you. The paintings are the least of it.',
-  intro: 'Take three artefacts from their cases, then leave. Break line of sight before the WATCHED meter fills.',
-  ambientLight: [0.026, 0.022, 0.018], bounce: 0.34, lightRange: 17,
-  fog: { color: 0x18140f, density: 0.032 }, tuning: { grimeScale: 0.6, wetScale: 0.2 },
-  gen: lobby({ height: 3.4, wallMat: 'gallery_green', floorMat: 'wood_floor', ceilMat: 'ceiling_white', fixtureMat: 'fixture_troffer', frameMat: 'metal_white', fixtureColor: [1.0, 0.9, 0.76], fixtureIntensity: 3.4,
-    density: [0.25, 0.5], roomChance: 0.85, doorwayChance: 0.25, pillarChance: 0.1, deadChance: 0.06, flickerChance: 0.05, darkZones: 0.2,
-    featureWeights: { pool: 0, glass: 1.4, collapse: 0.2, exit: 0.6, blackout: 0.5 }, props: 'museum' }),
-  stages: [
-    { text: 'Take the artefacts', goal: 'artifact', count: 3, dist: [25, 55] },
-    { text: 'Leave through the gallery doors', goal: 'door_exit', dist: [45, 65], final: true },
-  ],
-  entities: [['onlooker', 3]], rare: [['peripheral', 0.4]],
-  loot: { keys: 10, water: 5, batteries: 3 },
-  phobia: { meters: ['watched'] },
-});
-
-// ------------------------------------------------------------------ 21 Monophobia
-add(21, {
-  subtitle: 'Monophobia', place: 'The Last Shopper', cls: 'Class 4',
-  description: 'A shopping centre with the music still playing and nobody in it. Nobody at all. Except, sometimes, at the far end of a hall.',
-  intro: 'Turn the two lighting panels back on and raise the shutter. There is nobody else here. Remember that.',
-  ambientLight: [0.032, 0.03, 0.028], bounce: 0.36, lightRange: 22,
-  fog: { color: 0x1f1d19, density: 0.026 }, tuning: { grimeScale: 0.8, wetScale: 0.5 },
-  gen: lobby({ height: 4.2, wallMat: 'stucco', floorMat: 'terrazzo', ceilMat: 'ceiling_white', fixtureMat: 'fixture_troffer', frameMat: 'metal_white', fixtureColor: [1.0, 0.96, 0.88], fixtureIntensity: 4.0,
-    density: [0.08, 0.3], roomChance: 0.4, pillarChance: 0.6, deadChance: 0.12, flickerChance: 0.04, darkZones: 0.3,
-    featureWeights: { pool: 0.6, glass: 1.0, collapse: 0.3, exit: 0.8, blackout: 0.8 }, props: 'mall' }),
-  stages: [
-    { text: 'Turn the lighting panels back on', goal: 'breaker', count: 2, dist: [30, 55] },
-    { text: 'Raise the exit shutter', goal: 'door_shutter', dist: [50, 70], final: true },
-  ],
-  entities: [['someone', 1]], rare: [],
-  loot: { keys: 10, water: 6, batteries: 3 },
-  phobia: { meters: ['isolation'] },
-});
-
-// ------------------------------------------------------------------ 22 Trypophobia
-add(22, {
-  subtitle: 'Trypophobia', place: 'The Comb', cls: 'Class 3', hum: 0.07,
-  description: 'Boiler rooms gone soft and porous: walls pocked with clusters of little holes, and a dry buzzing in all of them.',
-  intro: 'Shut the three steam valves, then climb out. Keep your distance from the swarm.',
-  ambientLight: [0.022, 0.016, 0.012], bounce: 0.28, lightRange: 15,
-  fog: { color: 0x1a1008, density: 0.042 }, tuning: { grimeScale: 1.8, wetScale: 1.2 },
-  gen: lobby({ height: 3.0, wallMat: 'plaster_old', floorMat: 'concrete_floor', ceilMat: 'ceiling_dirty', fixtureMat: 'fixture_sodium', frameMat: 'metal_rust', fixtureColor: [1.0, 0.7, 0.4], fixtureIntensity: 2.8,
-    density: [0.25, 0.6], roomChance: 0.35, pillarChance: 0.4, deadChance: 0.12, flickerChance: 0.1, darkZones: 0.35, missingTileChance: 0.04,
-    featureWeights: { pool: 0.4, glass: 0, collapse: 1.4, exit: 0.6, blackout: 1.0 }, props: 'hive' }),
-  stages: [
-    { text: 'Shut the steam valves', goal: 'valve', count: 3, dist: [22, 52] },
-    { text: 'Climb out through the boiler hatch', goal: 'hatch', dist: [45, 65], final: true },
-  ],
-  entities: [['hive', 3]], rare: [['deathmoth', 0.3]],
-  loot: { keys: 10, water: 7, batteries: 3 },
-});
-
-// ------------------------------------------------------------------ 23 Nyctophobia
-add(23, {
-  subtitle: 'Nyctophobia', place: 'The Long Dark', cls: 'Class 5', hum: 0.02,
-  description: 'Corridors with one working light for every twenty dead ones. Between the pools of light: nothing. Or something.',
-  intro: 'Light four lanterns to make a path, then find the exit. Move from light to light. The beam drives it back, but it drinks your batteries.',
-  dark: true,
-  ambientLight: [0.003, 0.003, 0.004], bounce: 0.3, lightRange: 15,
-  fog: { color: 0x020203, density: 0.05 }, tuning: { grimeScale: 1.2, wetScale: 0.5 },
-  gen: lobby({ height: 2.8, wallMat: 'concrete_painted', floorMat: 'concrete_floor', ceilMat: 'ceiling_dirty', fixtureMat: 'fixture_cold', frameMat: 'metal_grey', fixtureColor: [0.9, 0.95, 1.0], fixtureIntensity: 3.2,
-    density: [0.2, 0.55], fixtureEvery: 3, fixtureChance: 0.5, deadChance: 0.25, flickerChance: 0.05, darkZones: 0.85,
-    featureWeights: { pool: 0.3, glass: 0.3, collapse: 0.8, exit: 0.4, blackout: 2.0 }, props: 'lobby' }),
-  stages: [
-    { text: 'Light the lanterns', goal: 'lantern', count: 4, dist: [18, 46] },
-    { text: 'Find the exit in the dark', goal: 'door_exit', dist: [45, 60], final: true },
-  ],
-  entities: [['umbra', 2]], rare: [['smiler', 0.4]],
-  loot: { keys: 10, water: 5, batteries: 10 },
-});
-
-// ------------------------------------------------------------------ 24 Eisoptrophobia
-add(24, {
-  subtitle: 'Eisoptrophobia', place: 'The Hall of Mirrors', cls: 'Class 4',
-  description: 'A funhouse maze of mirrored walls and white marble. You are in every one of them. Some of them are moving on their own.',
-  intro: 'Smash three mirror cores, then find the exit. Your reflections only move when you do. Think before you walk.',
-  ambientLight: [0.032, 0.032, 0.036], bounce: 0.45, lightRange: 18,
-  fog: { color: 0x1a1c20, density: 0.03 }, tuning: { grimeScale: 0.4, wetScale: 0.2 },
-  gen: lobby({ height: 3.0, wallMat: 'mirror', floorMat: 'marble_floor', ceilMat: 'ceiling_white', fixtureMat: 'fixture_cold', frameMat: 'chrome', fixtureColor: [0.95, 0.97, 1.0], fixtureIntensity: 3.4,
-    density: [0.4, 0.75], roomChance: 0.2, doorwayChance: 0.1, pillarChance: 0.3, deadChance: 0.08, flickerChance: 0.05, darkZones: 0.2,
-    featureWeights: { pool: 0, glass: 1.6, collapse: 0.2, exit: 0.5, blackout: 0.6 }, props: 'void' }),
-  stages: [
-    { text: 'Smash the mirror cores', goal: 'artifact', count: 3, dist: [22, 50] },
-    { text: 'Find the way out of the maze', goal: 'door_exit', dist: [40, 60], final: true },
-  ],
-  entities: [['reflection', 3]], rare: [['mannequin', 0.4]],
-  loot: { keys: 10, water: 5, batteries: 3 },
-});
-
-// ------------------------------------------------------------------ 25 Atychiphobia
-add(25, {
-  subtitle: 'Atychiphobia', place: 'The Examination Hall', cls: 'Class 3', puzzle: true,
-  description: 'Rows of desks, a clock above the blackboard, an exam you never revised for. Every wrong answer is heard.',
-  intro: 'Shut the valves in the right order, then enter the code. The Examiner hears every mistake — and gets faster with each one.',
-  ambientLight: [0.024, 0.024, 0.026], bounce: 0.32, lightRange: 18,
-  fog: { color: 0x17181a, density: 0.034 }, tuning: { grimeScale: 1.0, wetScale: 0.3 },
-  gen: lobby({ height: 3.0, wallMat: 'drywall_blue', floorMat: 'vct_school', ceilMat: 'ceiling_white', fixtureMat: 'fixture_cold', frameMat: 'metal_white', fixtureColor: [0.95, 0.97, 1.0], fixtureIntensity: 3.4,
-    density: [0.3, 0.6], roomChance: 0.65, deadChance: 0.06, flickerChance: 0.05, darkZones: 0.2,
-    featureWeights: { pool: 0, glass: 0.6, collapse: 0.4, exit: 0.8, blackout: 0.6 }, props: 'school' }),
-  stages: [
-    { text: 'Shut the radiator valves in order', hint: 'Read the caretaker\'s note', goal: 'valve', count: 3, order: ['red', 'blue', 'yellow'], dist: [22, 48], clueDist: [6, 16], clueTitle: 'Caretaker\'s note' },
-    { text: 'Enter the exam-room code', hint: 'Four answers are written on scraps', goal: 'keypad', code: true, dist: [25, 40], clueDist: [8, 34], clueTitle: 'A crib sheet' },
-    { text: 'Hand in your paper at the exit', goal: 'door_exit', dist: [35, 55], from: 'prev', final: true },
-  ],
-  entities: [['examiner', 2]], rare: [],
-  loot: { keys: 11, water: 5, batteries: 3 },
-});
-
-// ------------------------------------------------------------------ 26 Atelophobia
-add(26, {
-  subtitle: 'Atelophobia', place: 'The White Gallery', cls: 'Class 3',
-  description: 'Perfect white halls, perfect marble floors, perfect statues — and broken glass scattered everywhere you need to walk.',
-  intro: 'Recover three flawless pieces, then leave. While you are unhurt, it will not see you. Stay perfect.',
-  ambientLight: [0.04, 0.04, 0.04], bounce: 0.46, lightRange: 20,
-  fog: { color: 0x2a2a2a, density: 0.024 }, tuning: { grimeScale: 0.2, wetScale: 0.2 },
-  gen: lobby({ height: 3.6, wallMat: 'statue_marble', floorMat: 'marble_floor', ceilMat: 'ceiling_white', fixtureMat: 'fixture_troffer', frameMat: 'metal_white', fixtureColor: [1.0, 1.0, 1.0], fixtureIntensity: 3.8,
-    density: [0.15, 0.4], roomChance: 0.8, doorwayChance: 0.25, deadChance: 0.02, flickerChance: 0.02, darkZones: 0.05,
-    featureWeights: { pool: 0, glass: 1.4, collapse: 0.1, exit: 0.5, blackout: 0.2 }, props: 'museum' }),
-  stages: [
-    { text: 'Recover the flawless pieces', goal: 'artifact', count: 3, dist: [25, 55] },
-    { text: 'Leave without a scratch', goal: 'door_exit', dist: [45, 65], final: true },
-  ],
-  entities: [['flawless', 3]], rare: [],
-  loot: { keys: 10, water: 7, batteries: 2 },
-  phobia: { hazards: ['glass'] },
-});
-
-// ------------------------------------------------------------------ 27 Decidophobia
-add(27, {
-  subtitle: 'Decidophobia', place: 'The Crossroads', cls: 'Class 4', puzzle: true,
-  description: 'Corridors that fork, and fork again. Windows that show somewhere else. Every one of them looks like the right way.',
-  intro: 'Two windows lead on. Read the notes, pick one, climb through. Do not stand still: the scales are weighing you.',
-  ambientLight: [0.028, 0.024, 0.02], bounce: 0.32, lightRange: 17,
-  fog: { color: 0x1d1810, density: 0.032 }, tuning: { grimeScale: 0.9, wetScale: 0.3 },
-  gen: lobby({ height: 2.8, wallMat: 'drywall_peach', floorMat: 'carpet_office', ceilMat: 'l0_ceiling', fixtureMat: 'fixture_troffer', frameMat: 'metal_white', fixtureColor: [1.0, 0.92, 0.78], fixtureIntensity: 3.4,
-    density: [0.3, 0.65], roomChance: 0.4, doorwayChance: 0.15, deadChance: 0.06, flickerChance: 0.06, darkZones: 0.25,
-    featureWeights: { pool: 0.4, glass: 0.6, collapse: 0.6, exit: 0.8, blackout: 0.8 }, props: 'lobby' }),
-  stages: [
-    { text: 'Choose a window', hint: 'Read the note first', goal: 'portal_window', count: 4, choose: 'lobby', dist: [18, 40], clueDist: [3, 8], clueTitle: 'A note on the floor',
-      chooseClue: 'Four windows. One onto blue water, one onto red, one onto trees, one onto nothing at all.\nThe fifth colour is the right one: yellow, the colour of where we started.\nDo not stand here thinking about it.' },
-    { text: 'Choose again', hint: 'Find the second note', goal: 'portal_window', count: 4, choose: 'pool', dist: [20, 40], from: 'prev', clueDist: [3, 9], clueTitle: 'Another note', final: true,
-      chooseClue: 'This time the way on is wet.\nBlue and white tile, water you can wade.\nDecide. Then go.' },
-  ],
-  entities: [['arbiter', 1]], rare: [['faceling', 0.3]],
-  loot: { keys: 11, water: 5, batteries: 3 },
-  phobia: { meters: ['indecision'] },
-});
-
-// ------------------------------------------------------------------ 28 Somniphobia
-add(28, {
-  subtitle: 'Somniphobia', place: 'The Night Shift', cls: 'Class 5', hum: 0.05,
-  description: 'An office at four in the morning. Screensavers, a ticking clock, a heaviness behind your eyes that will not go away.',
-  intro: 'Get three coffees from the vending machines, finish the report at the terminal, take the stairs. Keep moving. Stay awake.',
-  ambientLight: [0.016, 0.017, 0.022], bounce: 0.3, lightRange: 16,
-  fog: { color: 0x0e1016, density: 0.04 }, tuning: { grimeScale: 0.9, wetScale: 0.3 },
-  gen: lobby({ height: 2.7, wallMat: 'drywall_grey', floorMat: 'carpet_office', ceilMat: 'ceiling_white', fixtureMat: 'fixture_troffer', frameMat: 'metal_white', fixtureColor: [0.8, 0.86, 1.0], fixtureIntensity: 2.6,
-    density: [0.15, 0.45], roomChance: 0.6, pillarChance: 0.2, deadChance: 0.25, flickerChance: 0.08, darkZones: 0.45,
-    featureWeights: { pool: 0, glass: 2.0, collapse: 0.5, exit: 0.6, blackout: 1.0 }, props: 'office' }),
-  stages: [
-    { text: 'Get coffee from the vending machines', goal: 'vending', count: 3, dist: [20, 50] },
-    { text: 'Finish the report', goal: 'terminal', dist: [35, 50] },
-    { text: 'Clock out: take the stairs', goal: 'door_stairs', dist: [35, 50], from: 'prev', final: true },
-  ],
-  entities: [['sandman', 1]], rare: [['faceling', 0.4]],
-  loot: { keys: 10, water: 6, batteries: 4 },
-  phobia: { meters: ['drowsy'], coffee: true },
-});
-
-// ------------------------------------------------------------------ 29 Algophobia
-add(29, {
-  subtitle: 'Algophobia', place: 'The Abattoir', cls: 'Class 4', hum: 0.08,
-  description: 'Tiled killing floors, hooks, drains in the floor. Every surface here wants to cut you, and every cut keeps hurting.',
-  intro: 'Throw the three line breakers, then raise the loading shutter. Pain lingers here — drink to make it stop.',
-  ambientLight: [0.024, 0.012, 0.01], bounce: 0.28, lightRange: 16,
-  fog: { color: 0x1a0806, density: 0.04 }, tuning: { grimeScale: 1.8, wetScale: 1.4 },
-  gen: lobby({ height: 3.4, wallMat: 'wall_tile', floorMat: 'concrete_floor', ceilMat: 'concrete_dark', fixtureMat: 'fixture_red', frameMat: 'metal_rust', fixtureColor: [1.0, 0.5, 0.4], fixtureIntensity: 2.8,
-    density: [0.2, 0.5], roomChance: 0.35, pillarChance: 0.5, deadChance: 0.12, flickerChance: 0.12, strobeChance: 0.03, darkZones: 0.35,
-    featureWeights: { pool: 0.5, glass: 0, collapse: 1.0, exit: 0.7, blackout: 1.2 }, props: 'abattoir' }),
-  stages: [
-    { text: 'Throw the line breakers', goal: 'breaker', count: 3, dist: [22, 52] },
-    { text: 'Raise the loading shutter', goal: 'door_shutter', dist: [50, 70], final: true },
-  ],
-  entities: [['thorn', 3]], rare: [['skinstealer', 0.3]],
-  loot: { keys: 10, water: 8, batteries: 3 },
-  phobia: { hazards: ['pain'] },
-});
-
-// ------------------------------------------------------------------ 30 Panophobia
-add(30, {
-  subtitle: 'Panophobia', place: 'Everything, Everywhere', cls: 'Class 5', hum: 0.06, flashes: [24, 40],
-  description: 'The Lobby again — but every fear in the Wing has leaked into it. Webs. Dolls. Barking. Something that will not keep one shape.',
-  intro: 'Flip the three breakers, pull the main switch, and get out. Whatever it is now, it will be something else in a moment.',
-  wet: true,
-  ambientLight: [0.024, 0.022, 0.016], bounce: 0.32, lightRange: 17,
-  fog: { color: 0x1d170b, density: 0.036 }, tuning: { grimeScale: 1.4, wetScale: 1.2 },
-  gen: lobby({ height: 2.75, wallMat: 'l0_wall', floorMat: 'l0_carpet', ceilMat: 'l0_ceiling', fixtureMat: 'fixture_troffer', frameMat: 'metal_white', fixtureColor: [1.0, 0.94, 0.78], fixtureIntensity: 3.4,
-    density: [0.25, 0.65], deadChance: 0.12, flickerChance: 0.12, strobeChance: 0.04, dyingChance: 0.05, darkZones: 0.4,
-    featureWeights: { pool: 0.6, glass: 0.8, collapse: 1.0, exit: 0.6, blackout: 1.4 }, props: 'lobby' }),
-  stages: [
-    { text: 'Flip the breakers', goal: 'breaker', count: 3, dist: [25, 55] },
-    { text: 'Pull the main power switch', goal: 'breaker_main', dist: [35, 50], effects: [['powercut', 60, 4], ['spawn', 'formless', 1]] },
-    { text: 'Get out', goal: 'door_exit', dist: [45, 60], from: 'prev', final: true, revert: true },
-  ],
-  entities: [['formless', 2], ['porcelain', 2], ['goodboy', 2]], rare: [['weaver', 0.5], ['jester', 0.4]],
-  loot: { keys: 12, water: 7, batteries: 5 },
-  phobia: { hazards: ['webs', 'blink'] },
-});
-
-// ------------------------------------------------------------------ 31 Phobophobia
-add(31, {
-  subtitle: 'Phobophobia', place: 'The Panic Room', cls: 'Class 5', hum: 0.06,
-  description: 'Padded walls, flickering violet light, and your own heartbeat louder than anything. The fear has a shape here, and it grows.',
-  intro: 'Stabilise three anchors and find the door. Keep your FEAR down: light, health, distance. What you see at the edges is not real.',
-  ambientLight: [0.012, 0.008, 0.016], bounce: 0.3, lightRange: 15,
-  fog: { color: 0x0c0612, density: 0.045 }, tuning: { grimeScale: 0.8, wetScale: 0.3 },
-  gen: lobby({ height: 2.9, wallMat: 'fabric_white', floorMat: 'rubber_floor', ceilMat: 'void_black', fixtureMat: 'fixture_cold', frameMat: 'metal_dark', fixtureColor: [0.78, 0.6, 1.0], fixtureIntensity: 2.8,
-    density: [0.25, 0.6], roomChance: 0.5, deadChance: 0.15, flickerChance: 0.18, strobeChance: 0.04, dyingChance: 0.06, darkZones: 0.45,
-    featureWeights: { pool: 0, glass: 0.3, collapse: 0.8, exit: 0.4, blackout: 1.4 }, props: 'void' }),
-  stages: [
-    { text: 'Stabilise the anchors', goal: 'anchor', count: 3, dist: [22, 52] },
-    { text: 'Find the door', goal: 'door_exit', dist: [45, 60], final: true },
-  ],
-  entities: [['dread', 1]], rare: [['whisperer', 0.3]],
-  loot: { keys: 10, water: 7, batteries: 5 },
-  phobia: { meters: ['fear'] },
-});
-
-// ------------------------------------------------------------------ 32 Anthropophobia
-add(32, {
-  subtitle: 'Anthropophobia', place: 'Rush Hour', cls: 'Class 4', hum: 0,
-  description: 'Night streets between towers, and people. Grey coats, faces you cannot quite see, standing still in the road. Watching.',
-  intro: 'Throw the breakers at two substations, then get down into the subway. Keep them in front of you. Never let them crowd you.',
-  spawn: [16, 1.6], outdoor: true, ambience: 'city',
-  ambientLight: [0.04, 0.038, 0.045], bounce: 0.25, lightRange: 18,
-  fog: { color: 0x12121a, density: 0.024 }, tuning: { grimeScale: 1.1, wetScale: 1.2 },
-  sky: { top: 0x03040a, horizon: 0x221c22, glow: 0x3a2010, stars: 0.2, clouds: 0.7 },
-  envLamps: [[2.5, 1.7, 0.9], [1.6, 1.5, 1.2]],
-  gen: () => makeOpenGen('city'),
-  stages: [
-    { text: 'Throw the substation breakers', goal: 'breaker', count: 2, dist: [30, 60] },
-    { text: 'Get down into the subway', goal: 'door_stairs', dist: [50, 70], final: true },
-  ],
-  entities: [['stranger', 11]], rare: [],
-  loot: { keys: 12, water: 6, batteries: 3 },
-});
-
-// ------------------------------------------------------------------ 33 Chronophobia
-add(33, {
-  subtitle: 'Chronophobia', place: 'The Clockmaker\'s House', cls: 'Class 5', hum: 0.03,
-  description: 'Wood panelling and a thousand clocks, all ticking slightly out of step. They are counting down to something.',
-  intro: 'Wind the three clock weights and take the lift before your time runs out. Every hour, it gets closer.',
-  ambientLight: [0.022, 0.016, 0.01], bounce: 0.3, lightRange: 16,
-  fog: { color: 0x1a120a, density: 0.038 }, tuning: { grimeScale: 1.1, wetScale: 0.3 },
-  gen: lobby({ height: 3.0, wallMat: 'damask_hotel', floorMat: 'wood_floor', ceilMat: 'ceiling_dirty', fixtureMat: 'fixture_bulb', frameMat: 'brass', fixtureColor: [1.0, 0.8, 0.55], fixtureIntensity: 2.8,
-    density: [0.3, 0.6], roomChance: 0.7, doorwayChance: 0.2, deadChance: 0.08, flickerChance: 0.08, darkZones: 0.3,
-    featureWeights: { pool: 0, glass: 0.4, collapse: 0.4, exit: 0.6, blackout: 0.8 }, props: 'clockwork' }),
-  stages: [
-    { text: 'Wind the clock weights', goal: 'generator', count: 3, dist: [22, 50] },
-    { text: 'Take the lift before time runs out', goal: 'elevator', dist: [45, 60], final: true },
-  ],
-  entities: [['hourman', 1]], rare: [],
-  loot: { keys: 10, water: 5, batteries: 3 },
-  phobia: { clock: 420 },
-});
-
-// ------------------------------------------------------------------ 34 Arithmophobia
-add(34, {
-  subtitle: 'Arithmophobia', place: 'Accounts Receivable', cls: 'Class 4', puzzle: true,
-  description: 'Cubicles, ledgers, adding machines with the paper still spooling. Numbers everywhere. One of them is counting down.',
-  intro: 'Find the four digits and open the vault, then take the stairs. Every time you look at the Counter, the number drops.',
-  ambientLight: [0.026, 0.027, 0.03], bounce: 0.32, lightRange: 18,
-  fog: { color: 0x1b1d21, density: 0.032 }, tuning: { grimeScale: 0.9, wetScale: 0.3 },
-  gen: lobby({ height: 2.7, wallMat: 'drywall', floorMat: 'carpet_office', ceilMat: 'ceiling_white', fixtureMat: 'fixture_troffer', frameMat: 'metal_white', fixtureColor: [0.96, 0.98, 1.0], fixtureIntensity: 3.5,
-    density: [0.25, 0.5], roomChance: 0.4, deadChance: 0.06, flickerChance: 0.06, darkZones: 0.25,
-    featureWeights: { pool: 0, glass: 3.0, collapse: 0.4, exit: 0.6, blackout: 0.6 }, props: 'office' }),
-  stages: [
-    { text: 'Find the four digits and open the vault', hint: 'The ledgers are scattered around', goal: 'keypad', code: true, dist: [30, 45], clueDist: [10, 40], clueTitle: 'A ledger page' },
-    { text: 'Take the stairwell', goal: 'door_stairs', dist: [35, 55], from: 'prev', final: true },
-  ],
-  entities: [['counter', 1]], rare: [['faceling', 0.4]],
-  loot: { keys: 10, water: 5, batteries: 3 },
-});
-
-// ------------------------------------------------------------------ 35 Cyberphobia
-add(35, {
-  subtitle: 'Cyberphobia', place: 'The Server Farm', cls: 'Class 4', hum: 0.12,
-  description: 'Cold blue aisles of humming racks, cables in the ceiling, screens that show you from behind. Reality has a low frame rate here.',
-  intro: 'Recover three backup disks, upload them, then leave through security. Glance at it — never stare.',
-  ambientLight: [0.012, 0.018, 0.026], bounce: 0.26, lightRange: 16,
-  fog: { color: 0x060a12, density: 0.04 }, tuning: { grimeScale: 0.7, wetScale: 0.2 },
-  gen: lobby({ height: 3.2, wallMat: 'concrete_dark', floorMat: 'rubber_floor', ceilMat: 'void_black', fixtureMat: 'fixture_cold', frameMat: 'metal_dark', fixtureColor: [0.6, 0.8, 1.0], fixtureIntensity: 3.0,
-    density: [0.3, 0.6], roomChance: 0.3, pillarChance: 0.3, deadChance: 0.1, flickerChance: 0.12, strobeChance: 0.05, darkZones: 0.3,
-    featureWeights: { pool: 0, glass: 1.0, collapse: 0.4, exit: 0.6, blackout: 1.0 }, props: 'server' }),
-  stages: [
-    { text: 'Recover the backup disks', hint: 'Cabinets and lockers', item: 'disk', count: 3, dist: [25, 55] },
-    { text: 'Upload them at the console', goal: 'terminal', dist: [40, 55] },
-    { text: 'Leave through security', goal: 'door_security', dist: [35, 50], from: 'prev', final: true },
-  ],
-  entities: [['glitch', 2]], rare: [],
-  loot: { keys: 10, water: 5, batteries: 4 },
-  phobia: { hazards: ['glitch'] },
-});
-
-// ------------------------------------------------------------------ 36 Astraphobia
-add(36, {
-  subtitle: 'Astraphobia', place: 'The Storm', cls: 'Class 5', hum: 0,
-  description: 'Wheat flattened by wind under a sky that never stops flashing. Thunder on top of thunder. In every flash, a figure, a little closer.',
-  intro: 'Light the three storm lanterns and get down the storm-cellar hatch. When your hair stands on end, move — now.',
-  spawn: [2, 16], outdoor: true, cover: true, ambience: 'field', surface: () => 'grass',
-  ambientLight: [0.03, 0.032, 0.04], bounce: 0.2, lightRange: 18,
-  fog: { color: 0x0a0c12, density: 0.03 }, tuning: { grimeScale: 0.3, wetScale: 1.6 },
-  sky: { top: 0x05060a, horizon: 0x1a1c24, glow: 0x101420, stars: 0, moon: false, clouds: 1.0 },
-  gen: () => makeOpenGen('field'),
-  stages: [
-    { text: 'Light the storm lanterns', goal: 'lantern', count: 3, dist: [25, 60] },
-    { text: 'Get into the storm cellar', goal: 'hatch', dist: [55, 75], final: true },
-  ],
-  entities: [['stormcaller', 1]], rare: [['hound', 0.3]],
-  loot: { keys: 12, water: 6, batteries: 5 },
-  phobia: { hazards: ['storm'] },
-});
-
-// ------------------------------------------------------------------ 37 Chionophobia
-add(37, {
-  subtitle: 'Chionophobia', place: 'Whiteout', cls: 'Class 4', hum: 0, ambience: 'forest',
-  description: 'Bare trees in snow, the air white and moving. Your fingers have stopped hurting, which is worse.',
-  intro: 'Start three heaters to stay alive, then find the cabin. Heaters warm you — and draw them in.',
-  ambientLight: [0.12, 0.13, 0.15], bounce: 0.45, lightRange: 16,
-  fog: { color: 0xbcc6d2, density: 0.05 }, tuning: { grimeScale: 0.2, wetScale: 0.3 },
-  gen: () => makeForestGen({ treeChance: 0.1, floorMat: 'snow', leaves: 'none' }),
-  stages: [
-    { text: 'Start the heaters', goal: 'generator', count: 3, dist: [22, 55] },
-    { text: 'Find the cabin', goal: 'cabin', dist: [55, 75], final: true },
-  ],
-  entities: [['frostbitten', 4]], rare: [['haze', 0.3]],
-  loot: { keys: 10, water: 6, batteries: 4 },
-  phobia: { meters: ['cold'], heaters: true },
-});
-
-// ------------------------------------------------------------------ 38 Hemophobia
-add(38, {
-  subtitle: 'Hemophobia', place: 'The Blood Bank', cls: 'Class 4', hum: 0.07,
-  description: 'Donation chairs, cold-room fridges, bags of it hanging everywhere. The floors are sticky. The trails are fresh.',
-  intro: 'Collect three trauma kits and get out. Wounds bleed here until you drink. Fresh trails mean it was just there.',
-  wet: true,
-  ambientLight: [0.026, 0.014, 0.014], bounce: 0.3, lightRange: 17,
-  fog: { color: 0x1a0a0a, density: 0.038 }, tuning: { grimeScale: 1.4, wetScale: 1.4 },
-  gen: lobby({ height: 2.8, wallMat: 'plaster_hospital', floorMat: 'vct_hospital', ceilMat: 'ceiling_white', fixtureMat: 'fixture_red', frameMat: 'metal_white', fixtureColor: [1.0, 0.7, 0.66], fixtureIntensity: 3.0,
-    density: [0.3, 0.6], roomChance: 0.6, deadChance: 0.1, flickerChance: 0.1, strobeChance: 0.02, darkZones: 0.3,
-    featureWeights: { pool: 0.6, glass: 0.6, collapse: 0.5, exit: 0.8, blackout: 1.0 }, props: 'hospital' }),
-  stages: [
-    { text: 'Collect the trauma kits', goal: 'medkit', count: 3, dist: [25, 55] },
-    { text: 'Find the way out', goal: 'door_exit', dist: [50, 70], final: true },
-  ],
-  entities: [['bleeder', 3]], rare: [['wretch', 0.3]],
-  loot: { keys: 10, water: 8, batteries: 3 },
-  phobia: { hazards: ['bleed'] },
-});
-
-// ------------------------------------------------------------------ 39 Anthophobia
-add(39, {
-  subtitle: 'Anthophobia', place: 'The Hothouse', cls: 'Class 4', hum: 0.04,
-  description: 'Greenhouses joined into a maze, warm and humid, the air yellow with pollen. Some of the flowers are taller than you.',
-  intro: 'Turn the three sprinkler valves to wash the pollen down, then find the door. Watched, it is just a flower.',
-  wet: true,
-  ambientLight: [0.04, 0.05, 0.03], bounce: 0.35, lightRange: 18,
-  fog: { color: 0x3a3a20, density: 0.034 }, tuning: { grimeScale: 0.8, wetScale: 1.3 },
-  gen: lobby({ height: 3.6, wallMat: 'drywall_green', floorMat: 'dirt', ceilMat: 'glass_dirty', fixtureMat: 'fixture_troffer', frameMat: 'metal_green', fixtureColor: [1.0, 0.96, 0.8], fixtureIntensity: 3.6,
-    density: [0.2, 0.45], roomChance: 0.5, doorwayChance: 0.2, pillarChance: 0.3, deadChance: 0.06, flickerChance: 0.04, darkZones: 0.15,
-    featureWeights: { pool: 1.0, glass: 2.0, collapse: 0.3, exit: 0.6, blackout: 0.4 }, props: 'greenhouse' }),
-  stages: [
-    { text: 'Turn on the sprinklers', goal: 'valve', count: 3, dist: [22, 50] },
-    { text: 'Find the potting-shed door', goal: 'door_exit', dist: [45, 65], final: true },
-  ],
-  entities: [['bloom', 4]], rare: [['deathmoth', 0.3]],
-  loot: { keys: 10, water: 6, batteries: 3 },
-});
-
-// ------------------------------------------------------------------ 40 Bibliophobia
-add(40, {
-  subtitle: 'Bibliophobia', place: 'The Stacks', cls: 'Class 5',
-  description: 'Shelves to the ceiling in every direction, green lamps, the smell of old paper. A sign on every wall: SILENCE.',
-  intro: 'Return three overdue books to the reading desks, then take the stairs. It is blind. It hears everything. Crouch.',
-  hum: 0.0,
-  ambientLight: [0.018, 0.02, 0.014], bounce: 0.3, lightRange: 15,
-  fog: { color: 0x12140c, density: 0.04 }, tuning: { grimeScale: 1.0, wetScale: 0.2 },
-  gen: lobby({ height: 3.2, wallMat: 'damask_green', floorMat: 'carpet_green', ceilMat: 'ceiling_dirty', fixtureMat: 'fixture_bulb', frameMat: 'brass', fixtureColor: [0.9, 1.0, 0.75], fixtureIntensity: 2.6,
-    density: [0.4, 0.75], roomChance: 0.5, doorwayChance: 0.2, deadChance: 0.1, flickerChance: 0.05, darkZones: 0.3,
-    featureWeights: { pool: 0, glass: 0.2, collapse: 0.3, exit: 0.6, blackout: 0.8 }, props: 'library' }),
-  stages: [
-    { text: 'Return the overdue books', goal: 'artifact', count: 3, dist: [22, 50] },
-    { text: 'Take the stairs out, quietly', goal: 'door_stairs', dist: [40, 60], final: true },
-  ],
-  entities: [['librarian', 2]], rare: [],
-  loot: { keys: 10, water: 5, batteries: 3 },
-  phobia: { meters: ['noise'] },
-});
-
-// ------------------------------------------------------------------ 41 Botanophobia
-add(41, {
-  subtitle: 'Botanophobia', place: 'The Overgrowth', cls: 'Class 3', hum: 0.03,
-  description: 'An office building that the plants took back: vines through the ceiling tiles, roots splitting the floor, moss on everything.',
-  intro: 'Restart two backup generators and climb out through the roof hatch. When the floor rustles, get off that spot.',
-  wet: true,
-  ambientLight: [0.022, 0.03, 0.018], bounce: 0.32, lightRange: 16,
-  fog: { color: 0x0e160a, density: 0.04 }, tuning: { grimeScale: 1.6, wetScale: 1.2 },
-  gen: lobby({ height: 2.9, wallMat: 'concrete_painted', floorMat: 'lawn', ceilMat: 'ceiling_dirty', fixtureMat: 'fixture_troffer', frameMat: 'metal_green', fixtureColor: [0.9, 1.0, 0.8], fixtureIntensity: 2.8,
-    density: [0.2, 0.5], roomChance: 0.4, pillarChance: 0.3, deadChance: 0.2, flickerChance: 0.1, darkZones: 0.35, missingTileChance: 0.08,
-    featureWeights: { pool: 1.2, glass: 0.8, collapse: 1.4, exit: 0.6, blackout: 1.0 }, props: 'greenhouse' }),
-  stages: [
-    { text: 'Restart the backup generators', goal: 'generator', count: 2, dist: [25, 55] },
-    { text: 'Climb out through the roof hatch', goal: 'hatch', dist: [45, 65], final: true },
-  ],
-  entities: [['overgrowth', 3]], rare: [['worm', 0.2]],
-  loot: { keys: 10, water: 5, batteries: 3 },
-  phobia: { hazards: ['vines'] },
-});
-
-// ------------------------------------------------------------------ 42 Cibophobia
-add(42, {
-  subtitle: 'Cibophobia', place: 'The Food Court', cls: 'Class 3', hum: 0.06,
-  description: 'Counters heaped with food that has been sitting out for years. The smell. Something is still eating.',
-  intro: 'Get three things from the vending machines and raise the shutter. It can smell the almond water on you — drink it, do not hoard it.',
-  ambientLight: [0.032, 0.026, 0.018], bounce: 0.34, lightRange: 18,
-  fog: { color: 0x221a0e, density: 0.034 }, tuning: { grimeScale: 1.6, wetScale: 0.8 },
-  gen: lobby({ height: 3.4, wallMat: 'snack_wall', floorMat: 'terrazzo', ceilMat: 'ceiling_dirty', fixtureMat: 'fixture_troffer', frameMat: 'metal_white', fixtureColor: [1.0, 0.92, 0.76], fixtureIntensity: 3.4,
-    density: [0.15, 0.4], roomChance: 0.4, pillarChance: 0.5, deadChance: 0.08, flickerChance: 0.08, darkZones: 0.2,
-    featureWeights: { pool: 0.3, glass: 0.6, collapse: 0.4, exit: 0.8, blackout: 0.6 }, props: 'kitchen' }),
-  stages: [
-    { text: 'Use the vending machines', goal: 'vending', count: 3, dist: [22, 52] },
-    { text: 'Raise the delivery shutter', goal: 'door_shutter', dist: [50, 70], final: true },
-  ],
-  entities: [['glutton', 3]], rare: [['partygoer', 0.2]],
-  loot: { keys: 10, water: 10, batteries: 3 },
-});
-
-// ------------------------------------------------------------------ 43 Dendrophobia
-add(43, {
-  subtitle: 'Dendrophobia', place: 'The Dead Wood', cls: 'Class 4', hum: 0, ambience: 'forest',
-  description: 'Grey daylight through bare grey trees, all dead, all alike. You are fairly sure that one was not there a minute ago.',
-  intro: 'Light three marker lanterns, then find the cabin. Never walk right beside a dead tree with amber in its knot.',
-  ambientLight: [0.1, 0.1, 0.1], bounce: 0.3, lightRange: 16,
-  fog: { color: 0x5a5a58, density: 0.04 }, tuning: { grimeScale: 0.3, wetScale: 0.4 },
-  gen: () => makeForestGen({ treeChance: 0.16, leaves: 'none', floorMat: 'forest_floor' }),
-  stages: [
-    { text: 'Light the marker lanterns', goal: 'lantern', count: 3, dist: [25, 60] },
-    { text: 'Find the cabin', goal: 'cabin', dist: [60, 80], final: true },
-  ],
-  entities: [['rootwalker', 5]], rare: [['stature', 0.25]],
-  loot: { keys: 10, water: 5, batteries: 3 },
-});
-
-// ------------------------------------------------------------------ 44 Ergophobia
-add(44, {
-  subtitle: 'Ergophobia', place: 'Overtime', cls: 'Class 4',
-  description: 'Cubicles to the horizon, every in-tray full, every monitor waiting. You are expected to finish all of it before you leave.',
-  intro: 'Clear three terminals, file two breaker reports, then clock out. Keep working — the IDLE meter is how it finds you.',
-  ambientLight: [0.026, 0.027, 0.03], bounce: 0.32, lightRange: 18,
-  fog: { color: 0x1b1d21, density: 0.032 }, tuning: { grimeScale: 0.9, wetScale: 0.3 },
-  gen: lobby({ height: 2.7, wallMat: 'drywall_grey', floorMat: 'carpet_office', ceilMat: 'ceiling_white', fixtureMat: 'fixture_troffer', frameMat: 'metal_white', fixtureColor: [0.96, 0.98, 1.0], fixtureIntensity: 3.5,
-    density: [0.2, 0.5], roomChance: 0.45, pillarChance: 0.2, deadChance: 0.06, flickerChance: 0.06, darkZones: 0.2,
-    featureWeights: { pool: 0, glass: 2.5, collapse: 0.4, exit: 0.6, blackout: 0.6 }, props: 'office' }),
-  stages: [
-    { text: 'Clear the terminals', goal: 'terminal', count: 3, dist: [20, 50] },
-    { text: 'File the breaker reports', goal: 'breaker', count: 2, dist: [25, 50] },
-    { text: 'Clock out', goal: 'door_exit', dist: [40, 60], final: true },
-  ],
-  entities: [['supervisor', 2]], rare: [['faceling', 0.5]],
-  loot: { keys: 10, water: 5, batteries: 3 },
-  phobia: { meters: ['idle'] },
-});
-
-__e['PHOBIA_LEVELS'] = L;
-  return __e;
-})();
 __mod['src/levels/index.js'] = (function () {
   const __e = {};
 const { makeLobbyGen: makeLobbyGen } = __mod['src/world/gen/lobby.js'];
 const { makeForestGen: makeForestGen } = __mod['src/world/gen/forest.js'];
 const { makeOpenGen: makeOpenGen } = __mod['src/world/gen/open.js'];
-const { PHOBIA_LEVELS: PHOBIA_LEVELS } = __mod['src/levels/phobia.js'];
-// Campaign: 31 levels, ordered and named after the backrooms wiki where a
-// level has a wiki counterpart (sub-numbers like 2.5 are this game's own).
-// cls is the wiki-style survival class; passive levels have nothing hostile. Every level is a parameter set for one of the chunked
-// generators plus a list of objective stages, the entities that roam it and
-// how much loot is hidden in its drawers and nooks. Seeds are fixed so the
-// same keys sit in the same drawers on every visit (collected keys are saved).
+const { PROP_SETS: PROP_SETS } = __mod['src/world/props.js'];
+const { MATS: MATS } = __mod['src/gfx/materials.js'];
+const { ITEM_NAMES: ITEM_NAMES } = __mod['src/game/loot.js'];
+// THE LEVEL LIST. Every level of every pack is a file under levels/<pack>/ and
+// levels/loader.js has already run them (see levels/README.md). This module only
+// compiles that data into what the game runs on:
 //
-// Stage fields (see game/objectives.js):
-//   text      HUD line
-//   goal      interactive object to place (door_exit, breaker, valve, ...)
-//   item      special item hidden in a container near the chosen spot
-//   count     how many targets this stage needs
-//   dist      [min, max] metres from the origin ('spawn' or the previous goal)
-//   survive   seconds to stay alive instead of a target
-//   effects   run when the stage completes; start: run when it begins
-//   final     completing this stage finishes the level
-//   revert    dying during this stage drops you back one stage
+//   * it turns a level's `gen` descriptor - { type: 'lobby' | 'forest' | 'open',
+//     params: {...} } - into the generator factory the world streams from,
+//   * it applies each pack's extras (item names, furniture sets, materials),
+//   * it flattens the packs, in the order levels/packs.js declares them, into
+//     LEVELS, so a level file can be edited on its own without touching the
+//     engine, the campaign order or the other packs.
+//
+// Field reference for level files: levels/README.md.
+// Build one without writing code: other/level-studio.html.
 
-const lobby = (o) => () => makeLobbyGen(o);
+const LL = window.LabLevels;
+if (!LL || !LL.packs || !LL.packs.length) {
+  const msg = '[levels] no level packs loaded. The game reads every level from the levels/ folder next to ' +
+    'index.html - keep that folder, and check levels/packs.js if you have edited it.';
+  console.error(msg);
+  if (document.body) {
+    const box = document.createElement('div');
+    box.style.cssText = 'position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:99999;padding:18px 22px;' +
+      'font:13px/1.6 monospace;color:#ffd7d7;background:rgba(28,6,6,.96);border:1px solid #7a2a2a;border-radius:8px;max-width:70ch';
+    box.textContent = msg;
+    document.body.appendChild(box);
+  }
+}
 
-const LOBBY_BASE = {
-  height: 2.75, wallMat: 'l0_wall', floorMat: 'l0_carpet', ceilMat: 'l0_ceiling',
-  fixtureMat: 'fixture_troffer', frameMat: 'metal_white', fixtureColor: [1.0, 0.94, 0.78], fixtureIntensity: 3.6,
-};
+/** { type, params } -> the factory world.load() calls. A function is passed through untouched. */
+function compileGen(desc, id) {
+  if (typeof desc === 'function') return desc;
+  if (!desc || !desc.type) throw new Error(`[levels] ${id}: "gen" must look like { type: 'lobby', params: {...} }`);
+  const p = desc.params || {};
+  if (desc.type === 'lobby') return () => makeLobbyGen(p);
+  if (desc.type === 'forest') return () => makeForestGen(p);
+  if (desc.type === 'open') return () => makeOpenGen(desc.mode || p.mode || 'field', p);
+  throw new Error(`[levels] ${id}: unknown generator "${desc.type}" - use lobby, forest or open`);
+}
 
-const LEVELS = [
-  // ------------------------------------------------------------------ 1
-  {
-    id: 'level0', name: 'Level 0', subtitle: 'The Lobby', seed: 1001, cls: 'Class 1', passive: true,
-    description: 'Mono-yellow rooms, damp carpet and the hum of fluorescent tubes.',
-    intro: 'Nothing lives here. Only the hum, and the feeling of being watched. Find a way out.',
-    spawn: [16, 16], wet: true,
-    ambientLight: [0.030, 0.028, 0.020], bounce: 0.34, lightRange: 17,
-    fog: { color: 0x241d0f, density: 0.030 }, tuning: { grimeScale: 1, wetScale: 1 },
-    gen: lobby({
-      ...LOBBY_BASE, density: [0.22, 0.62],
-      deadChance: 0.05, flickerChance: 0.05, strobeChance: 0.012, dyingChance: 0.015, darkZones: 0.3,
-      featureWeights: { pool: 0.5, glass: 0.8, collapse: 0.7, exit: 0.9, blackout: 1.4 }, props: 'lobby',
-    }),
-    stages: [{ text: 'Find the exit door', goal: 'door_exit', dist: [50, 70], final: true }],
-    entities: [],
-    rare: [],
-    loot: { keys: 7, water: 4, batteries: 2 },
-  },
-  // ------------------------------------------------------------------ 2
-  {
-    id: 'level1', name: 'Level 1', subtitle: 'Habitable Zone', seed: 1102, cls: 'Class 1', fogBanks: 1.1,
-    description: 'Concrete halls and loading bays. Fog rolls off the puddles and hangs there for hours.',
-    intro: 'Get the freight elevator running: flip all three breakers first.',
-    spawn: [16, 16],
-    ambientLight: [0.018, 0.020, 0.024], bounce: 0.28, lightRange: 20,
-    fog: { color: 0x1a1d22, density: 0.036 }, tuning: { grimeScale: 1.15, wetScale: 0.8 },
-    gen: lobby({
-      height: 3.5, wallMat: 'concrete_painted', floorMat: 'concrete_floor', ceilMat: 'ceiling_dirty',
-      fixtureMat: 'fixture_cold', frameMat: 'metal_grey', fixtureColor: [0.88, 0.93, 1.0], fixtureIntensity: 3.2,
-      density: [0.12, 0.40], roomChance: 0.25, pillarChance: 0.5, doorwayChance: 0.07, fixtureEvery: 3, fixtureChance: 0.9,
-      deadChance: 0.11, flickerChance: 0.07, strobeChance: 0.01, dyingChance: 0.03, darkZones: 0.25, missingTileChance: 0.004,
-      featureWeights: { pool: 0.6, glass: 0.5, collapse: 1.0, exit: 0.8, blackout: 1.1 }, props: 'industrial',
-    }),
-    stages: [
-      { text: 'Turn on the breakers', goal: 'breaker', count: 3, dist: [22, 55] },
-      { text: 'Take the freight elevator', goal: 'elevator', dist: [45, 65], final: true },
-    ],
-    entities: [['hound', 2], ['faceling', 2], ['deathmoth', 1]],
-    rare: [['haze', 0.3], ['crawler', 0.15]],
-    loot: { keys: 8, water: 5, batteries: 3 },
-  },
-  // ------------------------------------------------------------------ 3
-  {
-    id: 'level2', name: 'Level 2', subtitle: 'Pipe Dreams', seed: 1203, cls: 'Class 3', puzzle: true,
-    description: 'Tiled maintenance corridors, standing water and screaming pipes.',
-    intro: 'The steam lines are open. Find the maintenance log: the valves must be shut in the right order.',
-    spawn: [16, 16], wet: true, hum: 0.07,
-    ambientLight: [0.020, 0.028, 0.030], bounce: 0.30, lightRange: 19,
-    fog: { color: 0x101b1e, density: 0.040 }, tuning: { grimeScale: 1.35, wetScale: 1.4 },
-    gen: lobby({
-      height: 3.0, wallMat: 'wall_tile', floorMat: 'pool_tile', ceilMat: 'concrete_painted',
-      fixtureMat: 'fixture_cold', frameMat: 'metal_white', fixtureColor: [0.86, 0.94, 0.98], fixtureIntensity: 3.0,
-      density: [0.10, 0.34], roomChance: 0.4, doorwayChance: 0.10, missingTileChance: 0.02,
-      deadChance: 0.08, flickerChance: 0.06, strobeChance: 0.02, dyingChance: 0.02, darkZones: 0.3,
-      featureWeights: { pool: 2.4, glass: 0.3, collapse: 0.5, exit: 0.6, blackout: 0.9 }, props: 'sewer',
-    }),
-    stages: [
-      { text: 'Shut the steam valves in order', hint: 'Read the maintenance log', goal: 'valve', count: 3, order: ['yellow', 'red', 'blue'], dist: [24, 50], clueDist: [6, 18], clueTitle: 'Maintenance log' },
-      { text: 'Climb out through the maintenance hatch', goal: 'hatch', dist: [45, 70], final: true },
-    ],
-    entities: [['faceling', 2], ['hound', 1], ['smiler', 2]],
-    rare: [['duller', 0.35], ['worm', 0.2]],
-    loot: { keys: 8, water: 5, batteries: 3 },
-  },
-  // ------------------------------------------------------------------ 4
-  {
-    id: 'level16', name: 'Level 2.5', subtitle: 'The Snackrooms', seed: 2617, cls: 'Class 2',
-    description: 'Vending machines hum in every room. A few still dispense almond water.',
-    intro: 'Find three vending machines that still work, then head for the exit.',
-    spawn: [16, 16],
-    ambientLight: [0.03, 0.026, 0.02], bounce: 0.32, lightRange: 17,
-    fog: { color: 0x221a10, density: 0.032 }, tuning: { grimeScale: 1.0, wetScale: 0.5 },
-    gen: lobby({
-      height: 2.75, wallMat: 'snack_wall', floorMat: 'terrazzo', ceilMat: 'l0_ceiling',
-      fixtureMat: 'fixture_troffer', frameMat: 'metal_white', fixtureColor: [1.0, 0.93, 0.8], fixtureIntensity: 3.4,
-      density: [0.2, 0.5], roomChance: 0.5,
-      deadChance: 0.06, flickerChance: 0.06, strobeChance: 0.01, dyingChance: 0.02, darkZones: 0.25,
-      featureWeights: { pool: 0.2, glass: 0.6, collapse: 0.6, exit: 0.8, blackout: 0.8 }, props: 'snack',
-    }),
-    stages: [
-      { text: 'Find working vending machines', goal: 'vending', count: 3, dist: [25, 55] },
-      { text: 'Reach the exit', goal: 'door_exit', dist: [50, 70], final: true },
-    ],
-    entities: [['hound', 2], ['skinstealer', 1], ['partygoer', 1]],
-    rare: [['haze', 0.2], ['whisperer', 0.15]],
-    loot: { keys: 9, water: 4, batteries: 3 },
-  },
-  // ------------------------------------------------------------------ 5
-  {
-    id: 'level3', name: 'Level 3', subtitle: 'Electrical Station', seed: 1304, hum: 0.09, cls: 'Class 4', puzzle: true,
-    description: 'Dark concrete, sodium lamps and a main breaker that should never be pulled.',
-    intro: 'The lift is locked behind a keypad. Four workers each left one digit of the code. Then cut the power and run.',
-    spawn: [16, 16],
-    ambientLight: [0.012, 0.011, 0.009], bounce: 0.22, lightRange: 15,
-    fog: { color: 0x0d0a07, density: 0.052 }, tuning: { grimeScale: 1.5, wetScale: 1.1 },
-    gen: lobby({
-      height: 3.2, wallMat: 'concrete_dark', floorMat: 'concrete_floor', ceilMat: 'void_black',
-      fixtureMat: 'fixture_sodium', frameMat: 'metal_dark', fixtureColor: [1.0, 0.66, 0.34], fixtureIntensity: 3.4,
-      density: [0.24, 0.58], roomChance: 0.3, pillarChance: 0.45, doorwayChance: 0.09, fixtureEvery: 3, fixtureChance: 0.82,
-      deadChance: 0.16, flickerChance: 0.14, strobeChance: 0.05, dyingChance: 0.06, darkZones: 0.42, missingTileChance: 0.03,
-      featureWeights: { pool: 0.4, glass: 0.4, collapse: 1.1, exit: 1.0, blackout: 1.3 }, props: 'industrial',
-    }),
-    stages: [
-      { text: 'Find the four digits and enter the code', hint: 'Notes are scattered around', goal: 'keypad', code: true, dist: [30, 45], clueDist: [10, 40], clueTitle: 'A scrap of paper' },
-      { text: 'Cut the main power', goal: 'breaker_main', dist: [25, 40], from: 'prev', effects: [['powercut', 55, 6]] },
-      { text: 'Reach the freight lift before the lights go out', goal: 'elevator', dist: [36, 46], from: 'prev', final: true, revert: true },
-    ],
-    entities: [['hound', 1], ['faceling', 1], ['skinstealer', 1], ['smiler', 2], ['deathmoth', 1]],
-    rare: [['duller', 0.35]],
-    loot: { keys: 9, water: 5, batteries: 4 },
-  },
-  // ------------------------------------------------------------------ 6
-  {
-    id: 'level4', name: 'Level 4', subtitle: 'Abandoned Office', seed: 1405, cls: 'Class 1', passive: true,
-    description: 'Endless empty offices, humming monitors, water coolers full of almond water. Quiet. Safe, mostly.',
-    intro: 'The security door needs a keycard. Someone left it in a desk drawer.',
-    spawn: [16, 16],
-    ambientLight: [0.024, 0.025, 0.027], bounce: 0.32, lightRange: 18,
-    fog: { color: 0x1a1c1f, density: 0.032 }, tuning: { grimeScale: 0.9, wetScale: 0.3 },
-    gen: lobby({
-      height: 2.7, wallMat: 'drywall_grey', floorMat: 'carpet_office', ceilMat: 'ceiling_white',
-      fixtureMat: 'fixture_troffer', frameMat: 'metal_white', fixtureColor: [0.95, 0.97, 1.0], fixtureIntensity: 3.4,
-      density: [0.15, 0.45], roomChance: 0.6, pillarChance: 0.2,
-      deadChance: 0.07, flickerChance: 0.06, strobeChance: 0.01, dyingChance: 0.02, darkZones: 0.2,
-      featureWeights: { pool: 0.0, glass: 2.5, collapse: 0.6, exit: 0.6, blackout: 0.6 }, props: 'office',
-    }),
-    stages: [
-      { text: 'Find the security keycard', hint: 'Search desk drawers', item: 'keycard', dist: [35, 55] },
-      { text: 'Open the security door', goal: 'door_security', dist: [50, 70], final: true },
-    ],
-    entities: [['faceling', 3]],
-    rare: [['stature', 0.2]],
-    loot: { keys: 10, water: 9, batteries: 3 },
-  },
-  // ------------------------------------------------------------------ 7
-  {
-    id: 'level5', name: 'Level 5', subtitle: 'Terror Hotel', seed: 1506, cls: 'Class 4',
-    description: 'A 1930s hotel: velvet corridors, jazz from nowhere, whispers in the walls. The manager is not human.',
-    intro: 'Find the room key, then take the service elevator down.',
-    spawn: [16, 16],
-    ambientLight: [0.020, 0.015, 0.010], bounce: 0.3, lightRange: 16,
-    fog: { color: 0x1c120a, density: 0.04 }, tuning: { grimeScale: 1.1, wetScale: 0.4 },
-    gen: lobby({
-      height: 2.6, wallMat: 'damask_hotel', floorMat: 'carpet_hotel', ceilMat: 'ceiling_dirty',
-      fixtureMat: 'fixture_bulb', frameMat: 'wood_dark', fixtureColor: [1.0, 0.8, 0.56], fixtureIntensity: 2.8,
-      density: [0.35, 0.7], roomChance: 0.75, pillarChance: 0.05, doorwayChance: 0.2,
-      deadChance: 0.1, flickerChance: 0.1, strobeChance: 0.02, dyingChance: 0.05, darkZones: 0.3,
-      featureWeights: { pool: 0.1, glass: 0.0, collapse: 0.4, exit: 0.6, blackout: 1.0 }, props: 'hotel',
-    }),
-    stages: [
-      { text: 'Find the room key', hint: 'Search nightstands and dressers', item: 'roomkey', dist: [35, 55] },
-      { text: 'Reach the service elevator', goal: 'elevator', dist: [50, 70], final: true },
-    ],
-    entities: [['skinstealer', 2], ['wretch', 1], ['smiler', 2], ['faceling', 1]],
-    rare: [['beast', 0.4], ['whisperer', 0.35], ['stature', 0.2]],
-    loot: { keys: 9, water: 5, batteries: 3 },
-  },
-  // ------------------------------------------------------------------ 8
-  {
-    id: 'level6', name: 'Level 6', subtitle: 'Lights Out', seed: 1607, hum: 0.0, cls: 'Class 5',
-    description: 'Total darkness. Only your flashlight, and the grins that answer it.',
-    intro: 'Every light is dead. Restart the generator and the Smilers will scatter.',
-    spawn: [16, 16], dark: true,
-    ambientLight: [0.002, 0.002, 0.002], bounce: 0.3, lightRange: 17,
-    fog: { color: 0x020202, density: 0.05 }, tuning: { grimeScale: 1.3, wetScale: 0.6 },
-    flashes: [16, 32],
-    gen: lobby({
-      height: 2.8, wallMat: 'concrete_painted', floorMat: 'concrete_floor', ceilMat: 'ceiling_dirty',
-      fixtureMat: 'fixture_cold', frameMat: 'metal_grey', fixtureColor: [0.9, 0.95, 1.0], fixtureIntensity: 3.4,
-      density: [0.2, 0.55], allDark: true, darkZones: 0,
-      featureWeights: { pool: 0.3, glass: 0.4, collapse: 0.8, exit: 0.0, blackout: 0.0 }, props: 'lobby',
-    }),
-    stages: [
-      { text: 'Restart the generator', goal: 'generator', dist: [40, 60], effects: [['lightsOn']] },
-      { text: 'Find the exit while the power holds', goal: 'door_exit', dist: [40, 55], from: 'prev', final: true },
-    ],
-    entities: [['smiler', 6], ['clump', 1]],
-    rare: [['duller', 0.4], ['whisperer', 0.2]],
-    loot: { keys: 8, water: 5, batteries: 6 },
-  },
-  // ------------------------------------------------------------------ 9
-  {
-    id: 'level26', name: 'Level 7', subtitle: 'Thalassophobia', seed: 3627, cls: 'Class 3', fogBanks: 0.9, hum: 0,
-    description: 'A rusted bunker on an endless, still sea. The fog is bone dust. Something huge moves out there.',
-    intro: 'Restart the two beacon generators, then find the drain hatch on the sea floor.',
-    spawn: [16, 16], outdoor: true, wade: true, ambience: 'ocean', leviathan: true,
-    ambientLight: [0.085, 0.09, 0.09], bounce: 0.4, lightRange: 16,
-    fog: { color: 0x8e8f88, density: 0.042 }, tuning: { grimeScale: 0.8, wetScale: 1.2 },
-    sky: { top: 0x9a9b94, horizon: 0x8e8f88, stars: 0, moon: false, clouds: 0 },
-    gen: () => makeOpenGen('ocean'),
-    stages: [
-      { text: 'Restart the beacon generators', goal: 'generator', count: 2, dist: [30, 60] },
-      { text: 'Find the drain hatch', goal: 'hatch', dist: [50, 70], final: true },
-    ],
-    entities: [['haze', 1], ['wretch', 1]],
-    rare: [['whisperer', 0.4], ['duller', 0.3], ['worm', 0.25]],
-    loot: { keys: 12, water: 7, batteries: 4 },
-  },
-  // ------------------------------------------------------------------ 10
-  {
-    id: 'level17', name: 'Level 7.1', subtitle: 'The Sewers', seed: 2718, cls: 'Class 3', fogBanks: 0.5, hum: 0.03, ambience: 'water',
-    description: 'Dripping brick tunnels and black water. The floodgates are all open.',
-    intro: 'Close three floodgate valves, then climb out through the manhole.',
-    spawn: [16, 16], wet: true,
-    ambientLight: [0.012, 0.014, 0.012], bounce: 0.24, lightRange: 15,
-    fog: { color: 0x0b0e0a, density: 0.05 }, tuning: { grimeScale: 1.6, wetScale: 1.6 },
-    gen: lobby({
-      height: 2.6, wallMat: 'concrete_dark', floorMat: 'concrete_dark', ceilMat: 'concrete_dark',
-      fixtureMat: 'fixture_cold', frameMat: 'metal_rust', fixtureColor: [0.8, 0.95, 0.85], fixtureIntensity: 2.8,
-      density: [0.35, 0.7], roomChance: 0.2, fixtureEvery: 3,
-      deadChance: 0.15, flickerChance: 0.1, strobeChance: 0.03, dyingChance: 0.06, darkZones: 0.4, missingTileChance: 0,
-      featureWeights: { pool: 2.5, glass: 0, collapse: 0.4, exit: 0.4, blackout: 1.2 }, props: 'sewer',
-    }),
-    stages: [
-      { text: 'Close the floodgate valves', goal: 'valve', count: 3, dist: [25, 55] },
-      { text: 'Climb out of the manhole', goal: 'hatch', dist: [50, 70], final: true },
-    ],
-    entities: [['wretch', 2], ['clump', 1], ['hound', 2], ['deathmoth', 1]],
-    rare: [['haze', 0.4], ['worm', 0.25]],
-    loot: { keys: 9, water: 5, batteries: 4 },
-  },
-  // ------------------------------------------------------------------ 11
-  {
-    id: 'level28', name: 'Level 8', subtitle: 'Cave System', seed: 3829, hum: 0, cls: 'Class 3',
-    description: 'Natural caverns under rock that goes on forever. Glowing fungus, old campsites, and things with too many legs.',
-    intro: 'Light three lanterns to mark the way back, then find the hatch out. Listen for clicking.',
-    spawn: [16, 16], ambience: 'water', fogBanks: 0.45, surface: () => 'soft',
-    ambientLight: [0.05, 0.05, 0.058], bounce: 0.34, lightRange: 15,
-    fog: { color: 0x07080a, density: 0.05 }, tuning: { grimeScale: 0.8, wetScale: 1.2 },
-    gen: () => makeOpenGen('cave'),
-    stages: [
-      { text: 'Light the lanterns', goal: 'lantern', count: 3, dist: [22, 55] },
-      { text: 'Find the hatch out', goal: 'hatch', dist: [50, 70], final: true },
-    ],
-    entities: [['troglosidae', 3], ['deathmoth', 2]],
-    rare: [['crawler', 0.3], ['worm', 0.25]],
-    loot: { keys: 11, water: 6, batteries: 5 },
-  },
-  // ------------------------------------------------------------------ 12
-  {
-    id: 'level20', name: 'Level 8.2', subtitle: 'The Mall', seed: 3021, cls: 'Class 2',
-    description: 'Shuttered storefronts, planters and a fountain that stopped long ago.',
-    intro: 'Shut off the alarm panels, then leave through the mall exit.',
-    spawn: [16, 16],
-    ambientLight: [0.03, 0.029, 0.026], bounce: 0.36, lightRange: 22,
-    fog: { color: 0x1f1d19, density: 0.028 }, tuning: { grimeScale: 0.9, wetScale: 0.6 },
-    gen: lobby({
-      height: 4.2, wallMat: 'stucco', floorMat: 'terrazzo', ceilMat: 'ceiling_white',
-      fixtureMat: 'fixture_troffer', frameMat: 'metal_white', fixtureColor: [1.0, 0.96, 0.88], fixtureIntensity: 4.2,
-      density: [0.08, 0.3], roomChance: 0.4, pillarChance: 0.6,
-      deadChance: 0.06, flickerChance: 0.04, strobeChance: 0.01, dyingChance: 0.02, darkZones: 0.2,
-      featureWeights: { pool: 0.8, glass: 1.0, collapse: 0.4, exit: 0.8, blackout: 0.6 }, props: 'mall',
-    }),
-    stages: [
-      { text: 'Shut off the alarm panels', goal: 'breaker', count: 2, dist: [30, 55] },
-      { text: 'Leave through the mall exit', goal: 'door_shutter', dist: [50, 70], final: true },
-    ],
-    entities: [['mannequin', 4], ['hound', 1], ['partygoer', 1], ['deathmoth', 1]],
-    rare: [['stature', 0.35], ['crawler', 0.2]],
-    loot: { keys: 10, water: 5, batteries: 3 },
-  },
-  // ------------------------------------------------------------------ 13
-  {
-    id: 'level24', name: 'Level 9', subtitle: 'The Suburbs', seed: 3425, cls: 'Class 4', hum: 0,
-    description: 'Identical houses under a moon that never moves. Something very tall stands between them.',
-    intro: 'The house key is in one of the mailboxes. Find the door it opens.',
-    spawn: [16, 1.6], outdoor: true, ambience: 'suburbs', surface: (x, z) => (((x % 32) + 32) % 32 < 4 || ((z % 32) + 32) % 32 < 4 || ((x % 32) + 32) % 32 > 28 || ((z % 32) + 32) % 32 > 28 ? 'carpet' : 'grass'),
-    ambientLight: [0.035, 0.042, 0.062], bounce: 0.22, lightRange: 18,
-    fog: { color: 0x0b0e16, density: 0.028 }, tuning: { grimeScale: 0.6, wetScale: 0.7 },
-    sky: { top: 0x01020a, horizon: 0x161c2c, glow: 0x0a0c18, stars: 1, clouds: 0.45 },
-    envLamps: [[2.5, 1.6, 0.8]],
-    gen: () => makeOpenGen('suburbs'),
-    stages: [
-      { text: 'Find the house key', hint: 'Search the mailboxes', item: 'housekey', dist: [30, 55] },
-      { text: 'Unlock the right front door', goal: 'door_exit', dist: [45, 65], final: true },
-    ],
-    entities: [['stature', 1], ['faceling', 3], ['hound', 2], ['howler', 1]],
-    rare: [['whisperer', 0.4], ['crawler', 0.35]],
-    loot: { keys: 12, water: 6, batteries: 4 },
-  },
-  // ------------------------------------------------------------------ 14
-  {
-    id: 'level19', name: 'Level 9.1', subtitle: 'Cubicle Farm', seed: 2920, cls: 'Class 2', puzzle: true,
-    description: 'Glass offices and cubicles to the horizon. Somebody left their data behind.',
-    intro: 'Find three data disks in the desks, upload them, then take the stairs.',
-    spawn: [16, 16],
-    ambientLight: [0.026, 0.027, 0.03], bounce: 0.32, lightRange: 18,
-    fog: { color: 0x1b1d21, density: 0.032 }, tuning: { grimeScale: 0.9, wetScale: 0.3 },
-    gen: lobby({
-      height: 2.7, wallMat: 'drywall', floorMat: 'carpet_office', ceilMat: 'ceiling_white',
-      fixtureMat: 'fixture_troffer', frameMat: 'metal_white', fixtureColor: [0.96, 0.98, 1.0], fixtureIntensity: 3.5,
-      density: [0.25, 0.5], roomChance: 0.4,
-      deadChance: 0.06, flickerChance: 0.06, strobeChance: 0.01, dyingChance: 0.02, darkZones: 0.25,
-      featureWeights: { pool: 0, glass: 3.0, collapse: 0.4, exit: 0.6, blackout: 0.6 }, props: 'office',
-    }),
-    stages: [
-      { text: 'Find the data disks', hint: 'Search desk drawers and filing cabinets', item: 'disk', count: 3, dist: [25, 55] },
-      { text: 'Upload them at the terminal', goal: 'terminal', dist: [40, 55] },
-      { text: 'Take the stairwell', goal: 'door_stairs', dist: [35, 50], from: 'prev', final: true },
-    ],
-    entities: [['faceling', 4], ['skinstealer', 2], ['mannequin', 2]],
-    rare: [['whisperer', 0.3], ['stature', 0.15]],
-    loot: { keys: 10, water: 5, batteries: 3 },
-  },
-  // ------------------------------------------------------------------ 15
-  {
-    id: 'level25', name: 'Level 10', subtitle: 'The Bumper Crop', seed: 3526, cls: 'Class 3', hum: 0,
-    description: 'Wheat to the horizon under a bruised dusk. Stained fences. Something tunnels under the roads.',
-    intro: 'Light the three signal lanterns, then find the old grain hatch. Crouch in the wheat to stay hidden.',
-    spawn: [2, 16], outdoor: true, cover: true, ambience: 'field', surface: () => 'grass',
-    ambientLight: [0.34, 0.26, 0.2], bounce: 0.2, lightRange: 18,
-    fog: { color: 0x3a3028, density: 0.026 }, tuning: { grimeScale: 0.3, wetScale: 0.8 },
-    sky: { top: 0x15141c, horizon: 0x6a4a38, glow: 0x5a2a10, stars: 0, moon: false, clouds: 0.85 },
-    gen: () => makeOpenGen('field'),
-    stages: [
-      { text: 'Light the signal lanterns', goal: 'lantern', count: 3, dist: [25, 60] },
-      { text: 'Find the grain hatch', goal: 'hatch', dist: [60, 80], final: true },
-    ],
-    entities: [['worm', 1], ['hound', 2], ['wretch', 1]],
-    rare: [['stature', 0.4], ['haze', 0.3], ['duller', 0.25]],
-    loot: { keys: 12, water: 6, batteries: 4 },
-  },
-  // ------------------------------------------------------------------ 16
-  {
-    id: 'level27', name: 'Level 11', subtitle: 'The Endless City', seed: 3728, cls: 'Class 1', passive: true, hum: 0,
-    description: 'Night avenues between towers that never end. A safe level, by Backrooms standards. Most windows are dark.',
-    intro: 'Throw the breakers at two substations, then find the subway stairs.',
-    spawn: [16, 1.6], outdoor: true, ambience: 'city',
-    ambientLight: [0.04, 0.038, 0.045], bounce: 0.25, lightRange: 18,
-    fog: { color: 0x12121a, density: 0.022 }, tuning: { grimeScale: 1.1, wetScale: 1.0 },
-    sky: { top: 0x03040a, horizon: 0x221c22, glow: 0x3a2010, stars: 0.3, clouds: 0.6 },
-    envLamps: [[2.5, 1.7, 0.9], [1.6, 1.5, 1.2]],
-    gen: () => makeOpenGen('city'),
-    stages: [
-      { text: 'Throw the substation breakers', goal: 'breaker', count: 2, dist: [30, 60] },
-      { text: 'Find the subway stairs', goal: 'door_stairs', dist: [50, 70], final: true },
-    ],
-    entities: [['faceling', 5]],
-    rare: [['stature', 0.3]],
-    loot: { keys: 12, water: 6, batteries: 4 },
-  },
-  // ------------------------------------------------------------------ 17
-  {
-    id: 'level12', name: 'Level 11.5', subtitle: 'Parking Garage', seed: 2213, cls: 'Class 2', hum: 0.06,
-    description: 'Sodium light, oil stains and rows of cars with nobody to drive them.',
-    intro: 'The exit gate is locked. The key is in a locker or toolbox somewhere.',
-    spawn: [16, 16],
-    ambientLight: [0.014, 0.011, 0.007], bounce: 0.25, lightRange: 18,
-    fog: { color: 0x120d06, density: 0.04 }, tuning: { grimeScale: 1.4, wetScale: 1.0 },
-    gen: lobby({
-      height: 2.9, wallMat: 'concrete', floorMat: 'asphalt', ceilMat: 'concrete_dark',
-      fixtureMat: 'fixture_sodium', frameMat: 'metal_dark', fixtureColor: [1.0, 0.64, 0.32], fixtureIntensity: 3.2,
-      density: [0.05, 0.18], roomChance: 0.1, pillarChance: 1.0, fixtureEvery: 3,
-      deadChance: 0.12, flickerChance: 0.08, strobeChance: 0.02, dyingChance: 0.04, darkZones: 0.3,
-      featureWeights: { pool: 0.2, glass: 0, collapse: 0.6, exit: 0.8, blackout: 1.0 }, props: 'garage',
-    }),
-    stages: [
-      { text: 'Find the gate key', hint: 'Search lockers, cabinets and toolboxes', item: 'gatekey', dist: [40, 60] },
-      { text: 'Open the exit gate', goal: 'door_shutter', dist: [50, 75], final: true },
-    ],
-    entities: [['skinstealer', 2], ['hound', 2]],
-    rare: [['crawler', 0.35], ['duller', 0.2]],
-    loot: { keys: 9, water: 5, batteries: 3 },
-  },
-  // ------------------------------------------------------------------ 18
-  {
-    id: 'level11', name: 'Level 13.1', subtitle: 'The Forest', seed: 2112, cls: 'Class 4', hum: 0, ambience: 'forest',
-    description: 'A moonless forest that goes on forever. Hounds hunt between the trunks.',
-    intro: 'Light three lanterns to mark the trail, then find the cabin.',
-    spawn: [16, 16],
-    ambientLight: [0.045, 0.055, 0.075], bounce: 0.2, lightRange: 16,
-    fog: { color: 0x18222c, density: 0.05 }, tuning: { grimeScale: 0.2, wetScale: 0.5 },
-    gen: () => makeForestGen({ treeChance: 0.14 }),
-    stages: [
-      { text: 'Light the lanterns', goal: 'lantern', count: 3, dist: [25, 60] },
-      { text: 'Find the cabin', goal: 'cabin', dist: [60, 80], final: true },
-    ],
-    entities: [['hound', 3], ['howler', 1], ['deathmoth', 2]],
-    rare: [['worm', 0.35], ['stature', 0.3]],
-    loot: { keys: 8, water: 5, batteries: 3 },
-  },
-  // ------------------------------------------------------------------ 19
-  {
-    id: 'level13', name: 'Level 14', subtitle: 'Military Hospital', seed: 2314, cls: 'Class 3',
-    description: 'Empty wards, gurneys in the hall, and something that drags itself between the beds.',
-    intro: 'Collect three medical kits from the wall cabinets, then find the exit.',
-    spawn: [16, 16],
-    ambientLight: [0.022, 0.026, 0.026], bounce: 0.32, lightRange: 18,
-    fog: { color: 0x141a19, density: 0.036 }, tuning: { grimeScale: 1.2, wetScale: 0.4 },
-    gen: lobby({
-      height: 2.8, wallMat: 'plaster_hospital', floorMat: 'vct_hospital', ceilMat: 'ceiling_white',
-      fixtureMat: 'fixture_cold', frameMat: 'metal_white', fixtureColor: [0.9, 0.97, 1.0], fixtureIntensity: 3.3,
-      density: [0.3, 0.6], roomChance: 0.6,
-      deadChance: 0.08, flickerChance: 0.08, strobeChance: 0.02, dyingChance: 0.03, darkZones: 0.3,
-      featureWeights: { pool: 0, glass: 0.8, collapse: 0.6, exit: 0.8, blackout: 1.0 }, props: 'hospital',
-    }),
-    stages: [
-      { text: 'Collect the medical kits', goal: 'medkit', count: 3, dist: [25, 55] },
-      { text: 'Find the hospital exit', goal: 'door_exit', dist: [50, 70], final: true },
-    ],
-    entities: [['wretch', 3], ['clump', 1], ['faceling', 1]],
-    rare: [['whisperer', 0.35], ['crawler', 0.25]],
-    loot: { keys: 9, water: 4, batteries: 3 },
-  },
-  // ------------------------------------------------------------------ 20
-  {
-    id: 'level14', name: 'Level 20', subtitle: 'The Warehouse', seed: 2415, cls: 'Class 3', hum: 0.08,
-    description: 'Shelving to the ceiling and a generator that keeps the dark at bay.',
-    intro: 'Shut down the generator, then reach the loading dock before the dark swallows the place.',
-    spawn: [16, 16],
-    ambientLight: [0.016, 0.017, 0.019], bounce: 0.26, lightRange: 20,
-    fog: { color: 0x101214, density: 0.034 }, tuning: { grimeScale: 1.3, wetScale: 0.6 },
-    gen: lobby({
-      height: 5.0, wallMat: 'concrete_block', floorMat: 'concrete_floor', ceilMat: 'concrete_dark',
-      fixtureMat: 'fixture_cold', frameMat: 'metal_grey', fixtureColor: [0.95, 0.96, 1.0], fixtureIntensity: 4.4,
-      density: [0.06, 0.24], roomChance: 0.15, pillarChance: 0.7, fixtureEvery: 3,
-      deadChance: 0.08, flickerChance: 0.06, strobeChance: 0.02, dyingChance: 0.03, darkZones: 0.2,
-      featureWeights: { pool: 0.2, glass: 0.4, collapse: 0.5, exit: 0.8, blackout: 0.8 }, props: 'industrial',
-    }),
-    stages: [
-      { text: 'Shut down the generator', goal: 'generator', dist: [40, 55], effects: [['powercut', 55, 7]] },
-      { text: 'Reach the loading dock before the dark', goal: 'door_shutter', dist: [38, 50], from: 'prev', final: true, revert: true },
-    ],
-    entities: [['hound', 2], ['skinstealer', 1], ['smiler', 2]],
-    rare: [['worm', 0.3], ['duller', 0.2]],
-    loot: { keys: 9, water: 5, batteries: 4 },
-  },
-  // ------------------------------------------------------------------ 21
-  {
-    id: 'level10', name: 'Level 30.5', subtitle: 'The Museum', seed: 2011, cls: 'Class 3',
-    description: 'Silent galleries of art nobody painted. The mannequins only move when you look away.',
-    intro: 'Recover three artifacts, then leave. Keep your eyes on the mannequins.',
-    spawn: [16, 16],
-    ambientLight: [0.028, 0.024, 0.02], bounce: 0.34, lightRange: 18,
-    fog: { color: 0x1d1712, density: 0.03 }, tuning: { grimeScale: 0.6, wetScale: 0.2 },
-    gen: lobby({
-      height: 3.4, wallMat: 'gallery_red', floorMat: 'wood_floor', ceilMat: 'ceiling_white',
-      fixtureMat: 'fixture_troffer', frameMat: 'metal_white', fixtureColor: [1.0, 0.9, 0.76], fixtureIntensity: 3.6,
-      density: [0.2, 0.45], roomChance: 0.9, doorwayChance: 0.25, pillarChance: 0.1,
-      deadChance: 0.06, flickerChance: 0.04, strobeChance: 0.01, dyingChance: 0.02, darkZones: 0.2,
-      featureWeights: { pool: 0, glass: 1.5, collapse: 0.2, exit: 0.6, blackout: 0.5 }, props: 'museum',
-    }),
-    stages: [
-      { text: 'Recover the artifacts', goal: 'artifact', count: 3, dist: [25, 60] },
-      { text: 'Leave through the gallery exit', goal: 'door_exit', dist: [50, 70], final: true },
-    ],
-    entities: [['mannequin', 7], ['smiler', 1]],
-    rare: [['stature', 0.35]],
-    loot: { keys: 9, water: 5, batteries: 2 },
-  },
-  // ------------------------------------------------------------------ 22
-  {
-    id: 'level9', name: 'Level 37', subtitle: 'The Poolrooms', seed: 1910, hum: 0.02, cls: 'Class 1', passive: true, puzzle: true,
-    description: 'Knee-deep warm water over white tile, deep pools with stairs down into them. Nothing here wants you. Calm.',
-    intro: 'It is quiet. Read the maintenance log, shut the valves in order, then find the stairwell.',
-    spawn: [16, 16], wade: true, ambience: 'water',
-    ambientLight: [0.045, 0.055, 0.06], bounce: 0.42, lightRange: 22,
-    fog: { color: 0x9fb8bd, density: 0.022 }, tuning: { grimeScale: 0.4, wetScale: 1.6 },
-    gen: lobby({
-      height: 4.0, wallMat: 'wall_tile', floorMat: 'pool_tile', ceilMat: 'ceiling_white',
-      fixtureMat: 'fixture_cold', frameMat: 'metal_white', fixtureColor: [0.92, 0.98, 1.0], fixtureIntensity: 4.2,
-      density: [0.08, 0.3], roomChance: 0.2, pillarChance: 0.6,
-      deadChance: 0.02, flickerChance: 0.02, strobeChance: 0, dyingChance: 0.01, darkZones: 0,
-      featureWeights: { pool: 4, glass: 0, collapse: 0, exit: 0.3, blackout: 0 }, props: 'pool', flood: 0.38,
-    }),
-    stages: [
-      { text: 'Shut the pool valves in order', hint: 'Read the maintenance log', goal: 'valve', count: 3, order: ['blue', 'green', 'red'], dist: [22, 48], clueDist: [5, 14], clueTitle: 'Maintenance log' },
-      { text: 'Find the stairwell door', goal: 'door_stairs', dist: [50, 70], final: true },
-    ],
-    entities: [],
-    rare: [],
-    loot: { keys: 8, water: 6, batteries: 2 },
-  },
-  // ------------------------------------------------------------------ 23
-  {
-    id: 'level15', name: 'Level 52', subtitle: 'The School Halls', seed: 2516, cls: 'Class 2',
-    description: 'Lockers, linoleum and a bell that has not rung in decades.',
-    intro: 'Ring the bell to unlock the main doors. Everything will hear it.',
-    spawn: [16, 16],
-    ambientLight: [0.024, 0.024, 0.026], bounce: 0.32, lightRange: 18,
-    fog: { color: 0x17181a, density: 0.034 }, tuning: { grimeScale: 1.1, wetScale: 0.3 },
-    gen: lobby({
-      height: 3.0, wallMat: 'drywall_blue', floorMat: 'vct_school', ceilMat: 'ceiling_white',
-      fixtureMat: 'fixture_cold', frameMat: 'metal_white', fixtureColor: [0.95, 0.97, 1.0], fixtureIntensity: 3.4,
-      density: [0.3, 0.6], roomChance: 0.6,
-      deadChance: 0.07, flickerChance: 0.05, strobeChance: 0.01, dyingChance: 0.02, darkZones: 0.25,
-      featureWeights: { pool: 0, glass: 0.6, collapse: 0.6, exit: 0.8, blackout: 0.8 }, props: 'school',
-    }),
-    stages: [
-      { text: 'Ring the school bell', goal: 'bell', dist: [35, 50], effects: [['alarm'], ['spawn', 'hound', 2], ['message', 'Everything heard that. Get to the main doors!']] },
-      { text: 'Get out through the main doors', goal: 'door_exit', dist: [45, 60], from: 'prev', final: true, revert: true },
-    ],
-    entities: [['hound', 2], ['faceling', 3], ['wretch', 1]],
-    rare: [['crawler', 0.3]],
-    loot: { keys: 10, water: 5, batteries: 3 },
-  },
-  // ------------------------------------------------------------------ 24
-  {
-    id: 'level29', name: 'Level 94', subtitle: 'Motion', seed: 3930, hum: 0, cls: 'Class 1 / 4 at night', puzzle: true,
-    description: 'Rolling claymation hills under a candy sky. Pleasant, by day. When night falls the puppets wake up.',
-    intro: 'Wind up the three music boxes before dark. When the puppets wake, stand still: they only see what moves.',
-    spawn: [16, 16], outdoor: true, ambience: 'field', surface: () => 'grass',
-    ambientLight: [0.40, 0.38, 0.40], bounce: 0.3, lightRange: 18,
-    fog: { color: 0xe9d6e2, density: 0.013 }, tuning: { grimeScale: 0.1, wetScale: 0.2 },
-    sky: { top: 0x7fb6f0, horizon: 0xf6d6e6, glow: 0xffc890, stars: 0, moon: false, clouds: 0.75 },
-    dayNight: { nightAt: 330, nightLight: 0.14, nightTop: 0x04050f, nightHorizon: 0x1c1430, nightFog: 0x0d0b16 },
-    gen: () => makeOpenGen('hills'),
-    stages: [
-      { text: 'Wind up the music boxes before dark', goal: 'musicbox', count: 3, dist: [25, 55], effects: [['night'], ['message', 'The sky goes out. The puppets are waking. If one looks at you, STOP MOVING.']] },
-      { text: 'Reach the little white house', goal: 'cabin', dist: [45, 65], from: 'prev', final: true },
-    ],
-    entities: [['puppet', 6]],
-    rare: [],
-    loot: { keys: 11, water: 5, batteries: 4 },
-  },
-  // ------------------------------------------------------------------ 25
-  {
-    id: 'level22', name: 'Level 120', subtitle: 'Frozen Halls', seed: 3223, cls: 'Class 3', hum: 0.04,
-    description: 'Frost on the walls, snow drifting across the floor, breath fogging in the cold.',
-    intro: 'Restart the two heaters, then find the way down.',
-    spawn: [16, 16],
-    ambientLight: [0.03, 0.036, 0.046], bounce: 0.4, lightRange: 18,
-    fog: { color: 0x8a96a6, density: 0.034 }, tuning: { grimeScale: 0.4, wetScale: 0.5 },
-    gen: lobby({
-      height: 3.0, wallMat: 'ice_wall', floorMat: 'snow', ceilMat: 'ceiling_white',
-      fixtureMat: 'fixture_cold', frameMat: 'metal_white', fixtureColor: [0.82, 0.9, 1.0], fixtureIntensity: 3.2,
-      density: [0.2, 0.5], roomChance: 0.4,
-      deadChance: 0.1, flickerChance: 0.08, strobeChance: 0.02, dyingChance: 0.04, darkZones: 0.3,
-      featureWeights: { pool: 0, glass: 0.6, collapse: 0.8, exit: 0.6, blackout: 0.8 }, props: 'industrial',
-    }),
-    stages: [
-      { text: 'Restart the heaters', goal: 'generator', count: 2, dist: [30, 55] },
-      { text: 'Find the way down', goal: 'hatch', dist: [50, 70], final: true },
-    ],
-    entities: [['hound', 3], ['howler', 1], ['wretch', 1]],
-    rare: [['stature', 0.35], ['haze', 0.35]],
-    loot: { keys: 10, water: 5, batteries: 4 },
-  },
-  // ------------------------------------------------------------------ 26
-  {
-    id: 'level30', name: 'Level 188', subtitle: 'The Courtyard of Windows', seed: 4031, hum: 0, cls: 'Class 2', puzzle: true,
-    description: 'An overcast courtyard boxed in by endless storeys of windows. Some windows look somewhere else. Some look back.',
-    intro: 'One window shows the way home. Read the note, check every view, and keep your distance from the dark ones.',
-    spawn: [16, 16], outdoor: true, ambience: 'city', fogBanks: 0.25, surface: () => 'carpet',
-    ambientLight: [0.20, 0.20, 0.22], bounce: 0.34, lightRange: 18,
-    fog: { color: 0x7c818a, density: 0.02 }, tuning: { grimeScale: 0.9, wetScale: 1.0 },
-    sky: { top: 0x4e5462, horizon: 0x8a8e97, glow: 0x000000, stars: 0, moon: false, clouds: 0.95 },
-    gen: () => makeOpenGen('courtyard'),
-    stages: [
-      { text: 'Find the window that leads home', hint: 'Read the note first', goal: 'portal_window', count: 4, choose: 'lobby', dist: [14, 40], clueDist: [3, 8], clueTitle: 'A note pinned to a bench', final: true,
-        chooseClue: 'I watched four windows for a week.\nOne opens onto blue water, one onto red, one onto trees, one onto nothing.\nThe last one is yellow and it hums. That one goes home.\nThe others hurt.' },
-    ],
-    entities: [['window', 7], ['peripheral', 2]],
-    rare: [['whisperer', 0.25]],
-    loot: { keys: 11, water: 5, batteries: 3 },
-  },
-  // ------------------------------------------------------------------ 27
-  {
-    id: 'level18', name: 'Level 666', subtitle: 'The Red Rooms', seed: 2819, cls: 'Class 5', hum: 0.06,
-    description: 'Blood-red velvet, low red light, and an elevator that takes its time.',
-    intro: 'Call the elevator and stay alive until it arrives.',
-    spawn: [16, 16],
-    ambientLight: [0.03, 0.006, 0.006], bounce: 0.3, lightRange: 16,
-    fog: { color: 0x1c0506, density: 0.042 }, tuning: { grimeScale: 1.0, wetScale: 0.4 },
-    gen: lobby({
-      height: 2.7, wallMat: 'red_room', floorMat: 'carpet_red', ceilMat: 'ceiling_dirty',
-      fixtureMat: 'fixture_red', frameMat: 'metal_dark', fixtureColor: [1.0, 0.25, 0.2], fixtureIntensity: 3.0,
-      density: [0.25, 0.55], roomChance: 0.6,
-      deadChance: 0.08, flickerChance: 0.12, strobeChance: 0.04, dyingChance: 0.04, darkZones: 0.3,
-      featureWeights: { pool: 0, glass: 0.3, collapse: 0.5, exit: 0, blackout: 1.0 }, props: 'red',
-    }),
-    stages: [
-      { text: 'Call the elevator', goal: 'elevator', dist: [45, 60] },
-      { text: 'Survive until the elevator arrives', survive: 45, start: [['spawn', 'skinstealer', 2], ['alarm']], revert: true },
-      { text: 'Get in the elevator', reuse: true, final: true },
-    ],
-    entities: [['skinstealer', 3], ['smiler', 2]],
-    rare: [['duller', 0.35], ['whisperer', 0.2]],
-    loot: { keys: 9, water: 6, batteries: 3 },
-  },
-  // ------------------------------------------------------------------ 28
-  {
-    id: 'level21', name: 'Level 999', subtitle: 'The Void Halls', seed: 3122, cls: 'Class 5', hum: 0.05,
-    description: 'Black walls that hum, lights that cannot decide, and reality coming apart.',
-    intro: 'Stabilise three anchors before the halls fall apart, then step through.',
-    spawn: [16, 16],
-    ambientLight: [0.006, 0.005, 0.009], bounce: 0.3, lightRange: 16,
-    fog: { color: 0x07050b, density: 0.05 }, tuning: { grimeScale: 0.6, wetScale: 0.3 },
-    flashes: [22, 40],
-    gen: lobby({
-      height: 3.0, wallMat: 'void_wall', floorMat: 'concrete_dark', ceilMat: 'void_black',
-      fixtureMat: 'fixture_cold', frameMat: 'metal_dark', fixtureColor: [0.72, 0.76, 1.0], fixtureIntensity: 3.2,
-      density: [0.25, 0.6], roomChance: 0.3,
-      deadChance: 0.22, flickerChance: 0.15, strobeChance: 0.06, dyingChance: 0.08, darkZones: 0.5,
-      featureWeights: { pool: 0.2, glass: 0.3, collapse: 1.2, exit: 0.3, blackout: 1.5 }, props: 'void',
-    }),
-    stages: [
-      { text: 'Stabilise the anchors', goal: 'anchor', count: 3, dist: [25, 55] },
-      { text: 'Step through the exit', goal: 'door_exit', dist: [50, 65], final: true },
-    ],
-    entities: [['clump', 2], ['smiler', 4], ['howler', 1]],
-    rare: [['duller', 0.45], ['whisperer', 0.45], ['haze', 0.35]],
-    loot: { keys: 10, water: 6, batteries: 4 },
-  },
-  // ------------------------------------------------------------------ 29
-  {
-    id: 'level7', name: 'Level !', subtitle: 'Run For Your Life', seed: 1708, hum: 0.04, cls: 'Deadzone',
-    description: 'One endless hallway under red lights. It is right behind you. It never stops.',
-    intro: 'RUN.',
-    spawn: [16, 16], adrenaline: true,
-    ambientLight: [0.02, 0.004, 0.003], bounce: 0.3, lightRange: 18,
-    fog: { color: 0x1a0504, density: 0.035 }, tuning: { grimeScale: 1.3, wetScale: 0.5 },
-    gen: lobby({
-      height: 3.0, wallMat: 'concrete_painted', floorMat: 'concrete_floor', ceilMat: 'ceiling_dirty',
-      fixtureMat: 'fixture_red', frameMat: 'metal_dark', fixtureColor: [1.0, 0.16, 0.1], fixtureIntensity: 3.6,
-      density: [0.3, 0.6], corridor: true, pillarChance: 0.2,
-      deadChance: 0.05, flickerChance: 0.2, strobeChance: 0.1, dyingChance: 0.02, darkZones: 0,
-      featureWeights: { pool: 0, glass: 0, collapse: 0.4, exit: 1.5, blackout: 0 }, props: 'industrial',
-    }),
-    stages: [{ text: 'RUN. Reach the exit at the end of the hall', goal: 'door_exit', dist: [210, 210], angle: 0, corridor: true, final: true }],
-    entities: [['chase', 1, { delay: 2.5 }]],
-    loot: { keys: 6, water: 3, batteries: 1, region: [-1, -1, 7, 1] },
-  },
-  // ------------------------------------------------------------------ 30
-  {
-    id: 'level8', name: 'Level Fun =)', subtitle: 'The Birthday Party', seed: 1809, hum: 0.03, cls: 'Class 5',
-    description: 'Balloons, cake and streamers. The Partygoers would love for you to stay.',
-    intro: 'Blow out the candles, then get out. Do not let the party catch you.',
-    spawn: [16, 16], ambience: 'party',
-    ambientLight: [0.03, 0.024, 0.026], bounce: 0.34, lightRange: 18,
-    fog: { color: 0x22141a, density: 0.03 }, tuning: { grimeScale: 0.7, wetScale: 0.2 },
-    gen: lobby({
-      height: 2.8, wallMat: 'party_wall', floorMat: 'party_carpet', ceilMat: 'ceiling_white',
-      fixtureMat: 'fixture_troffer', frameMat: 'metal_white', fixtureColor: [1.0, 0.92, 0.85], fixtureIntensity: 3.4,
-      density: [0.15, 0.4], roomChance: 0.7,
-      deadChance: 0.04, flickerChance: 0.04, strobeChance: 0.01, dyingChance: 0.01, darkZones: 0.1,
-      featureWeights: { pool: 0, glass: 0.3, collapse: 0.2, exit: 0.6, blackout: 0.3 }, props: 'party',
-    }),
-    stages: [
-      { text: 'Blow out the candles on the birthday cake', goal: 'cake', dist: [40, 55], effects: [['rage'], ['message', 'The party has noticed you. RUN.']] },
-      { text: 'Escape before the party catches you', goal: 'door_exit', dist: [45, 60], from: 'prev', final: true, revert: true },
-    ],
-    entities: [['partygoer', 5]],
-    rare: [['whisperer', 0.15]],
-    loot: { keys: 9, water: 5, batteries: 2 },
-  },
-  // ------------------------------------------------------------------ 31
-  {
-    id: 'level23', name: 'Level ∞', subtitle: 'The Final Exit', seed: 3324, cls: 'Class ∞',
-    description: 'Back where it started, but worse. Everything you have run from is waiting here.',
-    intro: 'Flip the breakers, pull the main switch, and run for THE EXIT.',
-    spawn: [16, 16], wet: true,
-    ambientLight: [0.024, 0.022, 0.016], bounce: 0.32, lightRange: 17,
-    fog: { color: 0x1d170b, density: 0.034 }, tuning: { grimeScale: 1.4, wetScale: 1.2 },
-    gen: lobby({
-      ...LOBBY_BASE, density: [0.25, 0.65],
-      deadChance: 0.1, flickerChance: 0.1, strobeChance: 0.03, dyingChance: 0.04, darkZones: 0.35,
-      featureWeights: { pool: 0.6, glass: 0.8, collapse: 1.0, exit: 0.6, blackout: 1.4 }, props: 'lobby',
-    }),
-    stages: [
-      { text: 'Flip the breakers', goal: 'breaker', count: 3, dist: [25, 55] },
-      { text: 'Pull the main power switch', goal: 'breaker_main', dist: [35, 55], effects: [['powercut', 60, 8], ['spawn', 'chase', 1]] },
-      { text: 'Reach THE EXIT', goal: 'door_final', dist: [48, 60], from: 'prev', final: true, revert: true },
-    ],
-    entities: [['skinstealer', 2], ['howler', 1], ['hound', 2], ['wretch', 1], ['smiler', 3]],
-    rare: [['worm', 0.35], ['whisperer', 0.35], ['stature', 0.3], ['crawler', 0.3], ['duller', 0.3], ['haze', 0.3], ['troglosidae', 0.3], ['beast', 0.2]],
-    loot: { keys: 12, water: 7, batteries: 4 },
-  },
-];
-for (const l of LEVELS) l.track = l.track || 'main';
-LEVELS.push(...PHOBIA_LEVELS);
+const REQUIRED = ['id', 'name', 'description', 'intro', 'seed', 'stages', 'gen'];
+
+/** One level file -> one runtime level. Missing fields get sane defaults so a hand-written level still runs. */
+function compileLevel(def, pack) {
+  for (const k of REQUIRED) if (def[k] === undefined) console.warn(`[levels] ${def.id || '(level without id)'} is missing "${k}"`);
+  const lv = { ...def };
+  lv.track = pack.id;
+  lv.gen = compileGen(def.gen, def.id);
+  if (lv.surface !== undefined && typeof lv.surface !== 'function') { const s = String(lv.surface); lv.surface = () => s; }
+  lv.name = lv.name || lv.id;
+  lv.subtitle = lv.subtitle || lv.name;
+  lv.cls = lv.cls || 'Class 1';
+  lv.spawn = lv.spawn || [16, 16];
+  lv.ambientLight = lv.ambientLight || [0.03, 0.03, 0.03];
+  lv.bounce = lv.bounce ?? 0.32;
+  lv.lightRange = lv.lightRange ?? 17;
+  lv.fog = lv.fog || { color: 0x1a1a18, density: 0.03 };
+  lv.entities = lv.entities || [];
+  lv.rare = lv.rare || [];
+  lv.loot = { keys: 9, water: 5, batteries: 3, ...(lv.loot || {}) };
+  return lv;
+}
+
+/** Pack extras: item names, furniture sets and material recipes a pack adds for its own levels. */
+function applyExtras(pack) {
+  const x = LL.extras[pack.folder] || LL.extras[pack.id];
+  if (!x) return;
+  if (x.items) Object.assign(ITEM_NAMES, x.items);
+  if (x.props) for (const k of Object.keys(x.props)) PROP_SETS[k] = x.props[k];
+  if (x.mats) for (const k of Object.keys(x.mats)) MATS[k] = x.mats[k];
+}
+
+const PACKS = [];
+const LEVELS = [];
+for (const p of LL.packs) {
+  const meta = { ...p };
+  delete meta.folder;
+  delete meta.files;
+  meta.tab = meta.tab || meta.name || meta.id;
+  meta.blurb = meta.blurb || '';
+  meta.win = meta.win || ['LEVEL COMPLETE', 'LEVEL COMPLETE'];
+  if (meta.builtin === undefined) meta.builtin = meta.id === 'main';
+  PACKS.push(meta);
+  applyExtras(p);
+  for (const def of LL.levels[p.folder] || LL.levels[p.id] || []) LEVELS.push(compileLevel(def, p));
+}
+const packById = (id) => PACKS.find((p) => p.id === id) || PACKS[0];
 
 /** The levels of one track, in order. */
 function trackLevels(track) { return LEVELS.filter((l) => l.track === track); }
@@ -18836,390 +17598,30 @@ function levelIndex(id) {
   return Math.max(0, LEVELS.findIndex((l) => l.id === id));
 }
 
-
-
+__e['compileGen'] = compileGen;
+__e['trackLevels'] = trackLevels;
 __e['levelById'] = levelById;
 __e['levelIndex'] = levelIndex;
-__e['trackLevels'] = trackLevels;
+__e['PACKS'] = PACKS;
+__e['packById'] = packById;
+__e['CORRUPTION_LEVELS'] = trackLevels('corruption');
+__e['PLAYGROUND_LEVELS'] = trackLevels('playground');
 __e['LEVELS'] = LEVELS;
 __e.default = LEVELS;
+
   return __e;
 })();
 __mod['src/levels/packs.js'] = (function () {
   const __e = {};
-const { makeLobbyGen: makeLobbyGen } = __mod['src/world/gen/lobby.js'];
-const { makeForestGen: makeForestGen } = __mod['src/world/gen/forest.js'];
-const { makeOpenGen: makeOpenGen } = __mod['src/world/gen/open.js'];
-const { ITEM_NAMES: ITEM_NAMES } = __mod['src/game/loot.js'];
-const { LEVELS: LEVELS } = __mod['src/levels/index.js'];
-// ============================================================================
-// PACKS. The campaign is always there; the Phobia Wing and the two bonus packs are
-// installed from the start screen and remembered (localStorage + IndexedDB, see save.js).
-//
-//   CORRUPTION   thirty of the campaign's levels, left to rot for a thousand years. They are
-//                built from the originals: the same stages, rebuilt on a decayed generator
-//                (holes in the ceiling that pour water, plants through the floor, cracked
-//                floors, rifts that end the floor in a pale cloudy abyss, strong currents,
-//                skywalks with gaps torn out) and populated by mutated creatures.
-//   PLAYGROUND   thirty bright places: waterslides where one slide in four lets you live,
-//                towers of stairwells, ride queues, trampoline halls and catwalks.
-// ============================================================================
-
-const PACKS = [
-  { id: 'main', name: 'The Campaign', tab: 'Campaign', builtin: true, blurb: 'Thirty-one levels between you and the way out.', win: ['YOU FOUND THE WAY OUT', 'LEVEL COMPLETE'] },
-  { id: 'phobia', name: 'The Phobia Wing', tab: 'Phobia Wing', size: '11.4 MB', blurb: 'Forty-four fears, one creature each. Opens once Level 0 is escaped.', win: ['YOU FACED EVERY FEAR', 'FEAR OVERCOME'] },
-  { id: 'corruption', name: 'Corruption', tab: 'Corruption', size: '8.7 MB', bonus: true, blurb: 'Thirty of the original levels, left to rot for a thousand years. Cracked floors, rifts into the pale abyss, strong currents, and things that grew too many limbs.', win: ['THE ROT LET YOU GO', 'ROT ESCAPED'] },
-  { id: 'playground', name: 'Playground', tab: 'Playground', size: '9.2 MB', bonus: true, blurb: 'Thirty bright, loud places: waterslides where only one in four lets you live, towers of stairwells, and every ride the park ever built.', win: ['THE PARK IS CLOSED', 'RIDE OVER'] },
-];
-const packById = (id) => PACKS.find((p) => p.id === id) || PACKS[0];
-
-// ------------------------------------------------------------------ Corruption
-const lobby = (o) => () => makeLobbyGen(o);
-const mix = (a, b, t) => {
-  const f = (s) => ((a >> s) & 255) * (1 - t) + ((b >> s) & 255) * t;
-  return (Math.round(f(16)) << 16) | (Math.round(f(8)) << 8) | Math.round(f(0));
-};
-const PALE_SKY = { top: 0xaab6c0, horizon: 0xd8dedc, glow: 0x000000, stars: 0, moon: false, clouds: 0.95 };
-const SWAP = { smiler: 'mut_chorus', skinstealer: 'mut_splice', stature: 'mut_thicket', crawler: 'mut_sprawl', mannequin: 'mut_fractured', howler: 'mut_drowned' };
-const bump = (c) => (c ? c.replace(/Class (\d)/, (m, d) => 'Class ' + Math.min(5, +d + 1)) : 'Class 4');
-const CORR = [];
-
-/**
- * One corrupted level, built from campaign level `src`.
- * o: og (overgrowth 0..1), ck (cracked floor 0..1), leak (ceiling-stream weight), g (extra generator params),
- *    cliff (a rift in the floor), cur (water current), add (extra creatures), gen / stages (replace the originals).
- */
-function corrupt(n, src, sub, place, desc, twist, o = {}) {
-  const b = LEVELS.find((l) => l.id === src);
-  const pad = String(n).padStart(2, '0');
-  const lv = {
-    ...b, track: 'corruption', id: 'cor' + pad, name: `Δ-${pad}`, subtitle: sub, place, description: desc,
-    intro: `${b.intro} ${twist}`.trim(), seed: 7000 + n * 41, passive: false, cls: bump(b.cls),
-  };
-  const fog = b.fog || { color: 0x1a1a18, density: 0.03 };
-  const open = o.cliff || o.sky;
-  lv.fog = { color: mix(fog.color, open ? 0xc4cbc8 : 0x8a9684, open ? 0.7 : 0.3), density: fog.density * (open ? 0.6 : 1.12) };
-  lv.ambientLight = (b.ambientLight || [0.02, 0.02, 0.02]).map((x) => x * (open ? 2.2 : 1.25) + 0.008);
-  lv.tuning = { ...(b.tuning || {}), grimeScale: ((b.tuning && b.tuning.grimeScale) || 1) * 1.5, wetScale: ((b.tuning && b.tuning.wetScale) || 1) * 1.35 };
-  if (b.sky && !o.sky) lv.sky = { ...b.sky, clouds: Math.max(b.sky.clouds || 0, 0.8) };
-  if (o.cur) { lv.wade = true; lv.wet = true; lv.current = o.cur; lv.ambience = 'water'; }
-  if (o.cliff || o.sky || o.fall) lv.fall = true;
-  if (o.cliff || o.sky) lv.sky = PALE_SKY;
-  if (o.skyDef) lv.sky = o.skyDef;
-  if (o.stages) lv.stages = o.stages;
-  const ents = (b.entities || []).map(([t, c, op]) => [SWAP[t] || t, c, op]).concat(o.add || []);
-  lv.entities = ents.filter(([t]) => t !== 'chase');
-  lv.rare = (b.rare || []).map(([t, c]) => [SWAP[t] || t, Math.min(0.6, c * 1.4)]);
-  lv.loot = { ...(b.loot || { keys: 9, water: 5, batteries: 4 }), batteries: ((b.loot && b.loot.batteries) || 3) + 1 };
-  if (o.gen) lv.gen = o.gen;
-  else {
-    lv.gen = () => {
-      const g = b.gen(), P = g.params;
-      if (g.id === 'lobby') {
-        const w = P.featureWeights || {};
-        Object.assign(P, {
-          missingTileChance: (P.missingTileChance || 0.012) * 2.5 + 0.03,
-          deadChance: Math.min(0.5, (P.deadChance || 0.05) + 0.12), dyingChance: (P.dyingChance || 0.015) + 0.05,
-          flickerChance: (P.flickerChance || 0.05) + 0.06, darkZones: Math.min(0.7, (P.darkZones || 0.12) + 0.12),
-          overgrown: o.og ?? 0.4, cracked: o.ck ?? 0.7, damp: 0.55,
-          featureWeights: { ...w, collapse: (w.collapse || 0.5) * 1.8 + 0.4, leak: o.leak ?? 1.2 },
-          ...(o.g || {}), ...(o.cliff ? { cliff: o.cliff } : {}),
-        });
-      }
-      return g;
-    };
-  }
-  CORR.push(lv);
-}
-
-// a rift: where the floor stops, how long it runs, how far off it lies, how wide it opens
-const rift = (axis, offset, length = 64, width = 5) => ({ axis, mid: 8, length, offset, width, wobble: 10 });
-const FLOOD = { flood: 0.3, waterMat: 'water' };
-const CUR = (power, dir = 0.6) => ({ power, rate: 0.35, dir, swirl: 1.1 });
-
-corrupt(1, 'level0', 'The Rotted Lobby', 'Level 0, a thousand years on',
-  'The yellow has gone green. Ceiling tiles lie where they fell and the light comes down through the gaps in dusty bars.',
-  'The roof has holes now. Water comes through them in streams, and something has grown in the carpet.', { og: 0.5, leak: 1.6, add: [['mut_chorus', 1]] });
-corrupt(2, 'level1', 'The Sunken Zone', 'Where the loading bays stop',
-  'Concrete halls that end without warning. The floor simply stops, and below it is pale, soft, endless cloud.',
-  'Parts of the floor have fallen away. If the straight way is gone, find the long one.', { cliff: rift('x', -20), ck: 0.9, add: [['mut_chorus', 1]] });
-corrupt(3, 'level2', 'Pipe Dreams, Flooded', 'The maintenance level, drowned',
-  'The steam lines burst long ago and the corridors became channels. The water has somewhere to be, and it takes you with it.',
-  'The current is strong: it will carry you off the line you meant to walk. Brace, and cut across it.', { g: FLOOD, leak: 1.8, cur: CUR(2.4), add: [['mut_drowned', 1]] });
-corrupt(4, 'level16', 'The Snackrooms, Overgrown', 'Level 2.5, gone to seed',
-  'Vending machines furred with moss, grass through the terrazzo, and almond water that has become something else.',
-  'Plants have taken the floor. Everything that moves in the green is not wind.', { og: 0.95, add: [['mut_splice', 1]] });
-corrupt(5, 'level3', 'Electrical Station, Dead Rails', 'Level 3, the lights that stayed off',
-  'Sodium lamps dead for a hundred years, and a main breaker rusted into the wall. A rift has opened across the station floor.',
-  'The floor has split. The straight line to the lift is a long way down.', { cliff: rift('z', -22, 70, 5.5), ck: 1, add: [['mut_chorus', 1], ['mut_splice', 1]] });
-corrupt(6, 'level4', 'The Abandoned Office, Abandoned Again', 'Level 4, past the last person',
-  'Monitors grown over with ivy, the water coolers dry. The far end of the floor is a torn edge and a drop into cloud.',
-  'There is no ceiling past the third bay. Take the long way round the edge.', { cliff: rift('x', 26, 56, 5), og: 0.6, leak: 1.4, add: [['mut_splice', 2]] });
-corrupt(7, 'level5', 'Terror Hotel, Collapsed', 'Level 5, the east wing',
-  'Damask hanging in strips, carpets sodden to the subfloor. Whole rooms have fallen out of the building and left open air.',
-  'The east wing has fallen off. Every route that looks short is not.', { cliff: rift('z', 24, 60, 5), ck: 1, leak: 1.5, add: [['mut_splice', 1], ['mut_fractured', 1]] });
-corrupt(8, 'level6', 'Lights Out, For Good', 'Level 6, the dark that stopped moving',
-  'There were never any lights here, and now there is no floor to speak of either. Something is breathing from every hole in the ceiling.',
-  'Holes in the roof let in a grey nothing. Do not mistake it for a light.', { leak: 2, og: 0.5, ck: 1, add: [['mut_chorus', 2]] });
-corrupt(9, 'level26', 'The Tideless Sea', 'Level 7, with the tide gone strange',
-  'The sea no longer sits still. The current runs in long slow surges through the fog, and something enormous is no longer at a distance.',
-  'The water is moving now. Fight the current when it surges and use it when it lulls.', { cur: CUR(3.2, 0.2), add: [['mut_drowned', 1]] });
-corrupt(10, 'level17', 'The Sewers, Wide Open', 'Level 7.1, every gate open',
-  'The floodgates all failed at once. The tunnels run bank-full with fast black water and the walls weep.',
-  'Strong current, and a lot of it. Hold the walls when it surges.', { g: { ...FLOOD, flood: 0.34 }, leak: 2, cur: CUR(3.0, 1.9), add: [['mut_drowned', 2]] });
-corrupt(11, 'level28', 'Cave System, Fallen In', 'Level 8, the roof came down',
-  'The caverns have shifted. Old campsites lie under rubble, and the clicking has more voices than before.',
-  'Passages have collapsed. Listen for the clicking, and for what keeps up with it.', { add: [['mut_sprawl', 1]] });
-corrupt(12, 'level20', 'The Mall, Hollowed', 'Level 8.2, the atrium fell',
-  'Shuttered storefronts with their shutters hanging by one hinge. The atrium floor has dropped out and the fountain is a hole.',
-  'The central atrium is gone. Find the way round it, and keep clear of the mannequins that came with it.', { cliff: rift('x', 24, 60, 5.5), og: 0.5, leak: 1.5, add: [['mut_fractured', 2]] });
-corrupt(13, 'level24', 'The Suburbs, Regrown', 'Level 9, a hundred summers on',
-  'The houses are green boxes. The streets are meadows, the lawns have become forest, and the Watchers have more arms.',
-  'Everything has grown. The cover is thicker and so is what hides in it.', { add: [['mut_thicket', 1]] });
-corrupt(14, 'level19', 'Cubicle Farm, Ruins', 'Level 9.1, quarter by quarter',
-  'The partitions have rusted in place and the ceiling has come down in sheets. Rain falls on the monitors.',
-  'The ceiling is mostly gone. Streams of water cross the floor everywhere.', { leak: 2.2, og: 0.55, ck: 1, add: [['mut_splice', 1], ['mut_fractured', 1]] });
-corrupt(15, 'level25', 'The Bumper Crop, Gone Wild', 'Level 10, untended',
-  'The wheat is higher than it was and thicker, and what moves through it moves wrongly. The barns are tilted.',
-  'The field has been left alone for a very long time. So have the things in it.', { add: [['mut_sprawl', 1]] });
-corrupt(16, 'level27', 'The Endless City, Emptied', 'Level 11, no one left',
-  'Towers with half their faces torn off, avenues of rubble, a sky with nothing in it. It used to be the safe one.',
-  'It is not safe anymore. Take the avenues and not the shadows between them.', { add: [['mut_splice', 2], ['mut_chorus', 1]] });
-corrupt(17, 'level12', 'The Garage Roof, Broken', 'Level 11.5, what is left of the decks',
-  'The ramps are gone and the decks are a lattice of walkway hung over cloud, with long stretches torn out and ending in jagged stubs.',
-  'Whole spans have gone. When a walkway ends in nothing, go back and take another.',
-  { sky: true, gen: () => makeOpenGen('heights', { style: 'sky', broken: 0.75 }), add: [['mut_chorus', 1]],
-    stages: [{ text: 'Restart the two beacon generators', goal: 'generator', count: 2, dist: [20, 50] }, { text: 'Find the maintenance hatch', goal: 'hatch', dist: [40, 60], final: true }] });
-corrupt(18, 'level11', 'The Forest, Reclaimed', 'Level 13.1, where the trees won',
-  'The trees have closed the way. Roots have lifted the ground and the moon is a pale smear in the canopy.',
-  'The woods are denser, and the howling comes from more than one throat.', { add: [['mut_drowned', 1], ['mut_sprawl', 1]] });
-corrupt(19, 'level13', 'Military Hospital, Fallen', 'Level 14, the wards that dropped',
-  'Wards cut off mid-corridor. Beds stand on the lip of a drop. Rain pours through the operating theatre.',
-  'A whole wing has fallen away. Find the long route around the edge.', { cliff: rift('z', -20, 62, 5), leak: 1.6, og: 0.5, add: [['mut_splice', 2]] });
-corrupt(20, 'level14', 'The Warehouse Floor, Cracked', 'Level 20, the shafts',
-  'The floor of the warehouse has opened into black shafts. The aisles that are left are narrow, and cracks run along all of them.',
-  'The floor is full of holes with no bottom. Keep to the aisles.', { fall: true, skyDef: { top: 0x000000, horizon: 0x020202, glow: 0x000000, stars: 0, moon: false, clouds: 0 },
-    gen: () => makeOpenGen('heights', { style: 'pits' }), add: [['mut_sprawl', 1]],
-    stages: [{ text: 'Light the aisle lanterns', goal: 'lantern', count: 3, dist: [20, 48] }, { text: 'Reach the lift door', goal: 'door_exit', dist: [40, 60], final: true }] });
-corrupt(21, 'level10', 'The Museum, Cracked', 'Level 30.5, the gallery of fractures',
-  'Cases split, paintings sagging, marble floors fissured and falling away. The statues are no longer entirely statues.',
-  'The galleries end in a drop. Mind the exhibits: they have grown extra pieces.', { cliff: rift('x', -22, 60, 5.5), ck: 1, add: [['mut_fractured', 3]] });
-corrupt(22, 'level9', 'The Poolrooms, Drowned', 'Level 37, the water rose',
-  'The tiles are all under water, and the water is going somewhere. A strong, patient current moves through every hall.',
-  'The pools have joined into a river. The current is strong enough to take you out of a room.', { g: { flood: 0.46 }, leak: 2, cur: CUR(2.8, 2.4), add: [['mut_drowned', 2]] });
-corrupt(23, 'level15', 'The School Halls, Overgrown', 'Level 52, the last bell',
-  'Lockers crusted with moss, classrooms open to the sky. The gym floor ends in a drop into soft white cloud.',
-  'The hall past the gym is gone. Every shortcut ends in the same cliff.', { cliff: rift('x', 24, 64, 5), og: 0.8, leak: 1.5, add: [['mut_splice', 1], ['mut_fractured', 1]] });
-corrupt(24, 'level29', 'Motion, Unwound', 'Level 94, the puppets run down',
-  'The candy hills have dried and cracked. The puppets sag on their strings, and some have more than the usual number of arms.',
-  'Night comes the same. The puppets still only see what moves.', { add: [] });
-corrupt(25, 'level22', 'Frozen Halls, Thawed', 'Level 120, the melt',
-  'The ice has let go all at once. Meltwater streams through every hole in the ceiling and runs in strong sheets across the floors.',
-  'Meltwater is running through everything. It will push you, and it is freezing.', { g: { flood: 0.26, waterMat: 'water' }, leak: 2.4, cur: CUR(2.2, 1.0), add: [['mut_chorus', 1], ['mut_drowned', 1]] });
-corrupt(26, 'level30', 'The Courtyard of Windows, Cracked', 'Level 188, the glass came out',
-  'The windows have shattered, and what looks out of them has grown. Some of the frames are no longer in walls.',
-  'The views are the same. The things behind them are not.', { add: [['mut_fractured', 1]] });
-corrupt(27, 'level18', 'The Red Rooms, Bleeding', 'Level 666, through the ceiling',
-  'The velvet has rotted black and the ceiling weeps red-brown water in thick streams. The elevator takes longer than it did.',
-  'Streams pour from the roof. Do not stand under anything that is dripping red.', { leak: 2.4, og: 0.3, ck: 1, add: [['mut_chorus', 2], ['mut_splice', 1]] });
-corrupt(28, 'level21', 'The Void Halls, Unmade', 'Level 999, coming apart',
-  'Halls of nothing, now with less than nothing in them: rifts through all of it and an abyss below like wet paper.',
-  'The floor is breaking up in every direction. Go the long way. There is always a long way.', { cliff: rift('x', 22, 76, 6.5), ck: 1, leak: 1.2, add: [['mut_chorus', 3], ['mut_sprawl', 1]] });
-corrupt(29, 'level8', 'The Birthday Party, Years Later', 'Level Fun =), the cake still lit',
-  'Streamers rotted to string, balloons hung deflated from the pipes, and the presents grown over. Everyone is still here.',
-  'The guests have changed. They are still glad you came.', { og: 0.7, leak: 1.2, ck: 0.8, add: [['mut_chorus', 1], ['mut_splice', 1]] });
-corrupt(30, 'level23', 'The Final Exit, Rotted', 'Level ∞, one last way out',
-  'The exit is the same. Getting there is not: every hall has holes in its floor, holes in its roof and something old waiting at the end.',
-  'Everything that rotted is here. Get out.', { cliff: rift('z', 26, 72, 6), og: 0.7, leak: 2, ck: 1, add: [['mut_chorus', 2], ['mut_sprawl', 1], ['mut_thicket', 1]] });
-
-// ------------------------------------------------------------------ Playground
-ITEM_NAMES.ticket = 'Ride Ticket';
-ITEM_NAMES.token = 'Arcade Token';
-const PG = [];
-const pgAdd = (n, o) => {
-  PG.push({ track: 'playground', id: 'pg' + String(n).padStart(2, '0'), name: `Ω-${String(n).padStart(2, '0')}`, seed: 9000 + n * 47, spawn: [16, 16], cls: 'Class 3',
-    hum: 0.01, loot: { keys: 10, water: 5, batteries: 3 }, ...o });
-};
-// a bright lobby-style generator: walls, floor, light colour, density
-const lit = (wall, floor, col, o = {}) => lobby({ height: 3.2, wallMat: wall, floorMat: floor, ceilMat: 'ceiling_white', fixtureMat: 'fixture_troffer', frameMat: 'metal_white', fixtureColor: col, fixtureIntensity: 3.8,
-  density: [0.14, 0.4], roomChance: 0.45, doorwayChance: 0.18, deadChance: 0.02, flickerChance: 0.02, strobeChance: 0, dyingChance: 0, darkZones: 0.03, missingTileChance: 0.004,
-  featureWeights: { pool: 0.4, glass: 0.8, collapse: 0, exit: 0.6, blackout: 0 }, props: 'party', ...o });
-const BRIGHT = { fog: { color: 0xf2dce8, density: 0.016 }, ambientLight: [0.1, 0.09, 0.1], bounce: 0.4, lightRange: 20, tuning: { grimeScale: 0.1, wetScale: 0.3 } };
-const DAY = (top, hor) => ({ outdoor: true, ambientLight: [0.4, 0.38, 0.4], bounce: 0.3, lightRange: 18, fog: { color: hor, density: 0.011 }, tuning: { grimeScale: 0.1, wetScale: 0.2 }, sky: { top, horizon: hor, glow: 0xffd8a0, stars: 0, moon: false, clouds: 0.7 } });
-const SPLASH = { wet: true, wade: true, ambience: 'water', ambientLight: [0.1, 0.12, 0.13], bounce: 0.4, lightRange: 18, fog: { color: 0xbfe3ea, density: 0.02 }, tuning: { grimeScale: 0.1, wetScale: 1.8 } };
-// n stairwells in a row; each one puts you somewhere else and says what floor you are on
-const stairs = (n, label = 'Climb stairwell', dist = [30, 46], extra = {}, rise = 3) => Array.from({ length: n }, (_, k) => ({
-  text: `${label} ${k + 1} of ${n}`, goal: 'stairs', rise, dist, ...(k ? { from: 'prev' } : {}), ...(k === n - 1 ? { final: true } : { effects: [['message', `Floor ${k % 2 ? 'B' : ''}${k + 2}. Again.`]].concat(extra[k] ? [extra[k]] : []) }),
-}));
-const slides = (count = 4, o = {}) => ({ text: 'Pick a slide', hint: 'Only one in four lets you live', goal: 'slide', count, pickSafe: true, dist: [20, 36], rideTime: 8, ...o });
-const tickets = (n, text = 'Find the ride tickets') => ({ text, hint: 'Search drawers and boxes', item: 'ticket', count: n, dist: [22, 50] });
-
-pgAdd(1, { subtitle: 'The Welcome Gate', place: 'Please keep your hands inside the park', description: 'A pink and gold entrance hall with a turnstile that does not turn. Everything is cheerful. The music box is the only thing speaking.',
-  intro: 'Find two ride tickets and swipe the gate controls, then walk out onto the midway.', ...BRIGHT,
-  gen: lit('party_wall', 'party_carpet', [1, 0.86, 0.95]),
-  stages: [tickets(2), { text: 'Switch the gate breakers on', goal: 'breaker', count: 2, dist: [22, 46] }, { text: 'Go through the park gate', goal: 'door_exit', dist: [40, 60], from: 'prev', final: true }],
-  entities: [['partygoer', 2]], rare: [['pg_attendant', 0.3]], cls: 'Class 2' });
-pgAdd(2, { subtitle: 'The Balloon Foyer', place: 'Mind the strings', description: 'Rooms full of helium balloons on ribbons that run the length of the halls. Some of them are looking at you.',
-  intro: 'Three party breakers have tripped. Flip them back and take the stairs. Balloons will not hurt you. The people holding them might.', ...BRIGHT,
-  gen: lit('drywall_peach', 'carpet_hotel_blue', [1, 0.82, 0.8], { props: 'nursery' }),
-  stages: [{ text: 'Reset the party breakers', goal: 'breaker', count: 3, dist: [22, 50] }, { text: 'Take the stairs to the midway', goal: 'stairs', dist: [40, 60], final: true }],
-  entities: [['partygoer', 3], ['faceling', 2]], rare: [['pg_ringmaster', 0.3]], cls: 'Class 2' });
-pgAdd(3, { subtitle: 'The Ball Pit Basement', place: 'Under the soft play', description: 'Low ceilings, deep carpet, a hundred thousand plastic balls piled against the walls. Something is swimming in them.',
-  intro: 'Find three arcade tokens in the toy chests and feed the machine. The floor is soft. Everything that lives here knows that.', ...BRIGHT,
-  gen: lit('plastic_blue', 'party_carpet', [0.9, 0.9, 1], { height: 2.4, density: [0.2, 0.5], props: 'nursery' }),
-  stages: [{ text: 'Find the arcade tokens', hint: 'Search toy chests', item: 'token', count: 3, dist: [22, 50] }, { text: 'Feed the token machine', goal: 'terminal', dist: [30, 46], from: 'prev' }, { text: 'Crawl out through the slide hatch', goal: 'hatch', dist: [40, 58], from: 'prev', final: true }],
-  entities: [['pg_bouncer', 1], ['partygoer', 2]], rare: [['smiler', 0.2]] });
-pgAdd(4, { subtitle: 'The First Slide', place: 'Four chutes, one splash', description: 'A tiled landing at the top of a tower, four slides side by side, each painted a different colour. They all look equally fun.',
-  intro: 'Get the tower lift key, then choose a slide. Only one of the four ends in water. The others end where slides should not.', ...SPLASH,
-  gen: lit('wall_tile', 'pool_tile_blue', [0.9, 1, 1], { props: 'pool', flood: 0.2, waterMat: 'water' }),
-  stages: [tickets(2, 'Find two ride tickets for the tower'), slides(4, { from: 'prev', final: true })],
-  entities: [['pg_lifeguard', 1]], rare: [], cls: 'Class 3', puzzle: true });
-pgAdd(5, { subtitle: 'The Staircase Tower', place: 'Eight floors, no lift', description: 'A stairwell the colour of boiled sweets. Every landing has another door to another stairwell, and another after that.',
-  intro: 'There are eight stairwells between you and the top. Each one drops you somewhere you have not been. Keep moving.', ...BRIGHT,
-  gen: lit('metal_yellow', 'rubber_floor', [1, 0.95, 0.7], { height: 2.8, props: 'industrial' }),
-  stages: stairs(8, 'Climb stairwell', [30, 46], {}, 3.3), entities: [['partygoer', 2], ['pg_attendant', 1]], rare: [] });
-pgAdd(6, { subtitle: 'The Arcade Halls', place: 'Insert coin', description: 'Cabinets in rows to the horizon, every screen showing the same four words. The floor is carpeted in pinball-table swirls.',
-  intro: 'Collect three tokens, upload your score at the main terminal and leave by the prize counter.', ...BRIGHT,
-  fog: { color: 0x100820, density: 0.03 }, ambientLight: [0.03, 0.02, 0.05], lightRange: 14,
-  gen: lit('paint_black', 'party_carpet', [0.7, 0.5, 1], { height: 3.0, fixtureIntensity: 3.2, darkZones: 0.25, props: 'party' }),
-  stages: [{ text: 'Find the arcade tokens', item: 'token', count: 3, dist: [20, 48] }, { text: 'Upload your high score', goal: 'terminal', dist: [30, 46], from: 'prev' }, { text: 'Reach the prize counter', goal: 'door_exit', dist: [40, 58], from: 'prev', final: true }],
-  entities: [['smiler', 3], ['pg_ringmaster', 1]], rare: [['partygoer', 0.4]] });
-pgAdd(7, { subtitle: 'The Carousel Court', place: 'Round and round', description: 'A courtyard of painted horses, brass poles and the same song, over and over, a little out of tune.',
-  intro: 'Wind three music boxes to quiet the carousels, then reach the park clock. The horses are only decoration. The riders are not.', ...DAY(0x7fb6f0, 0xf6d6e6),
-  gen: () => makeOpenGen('courtyard'), ambience: 'field', surface: () => 'carpet',
-  stages: [{ text: 'Wind the carousel music boxes', goal: 'musicbox', count: 3, dist: [20, 44] }, { text: 'Reach the park clock', goal: 'cabin', dist: [40, 58], from: 'prev', final: true }],
-  entities: [['pg_ringmaster', 1], ['partygoer', 2], ['jester', 1]], rare: [['pg_mascot', 0.3]], cls: 'Class 3' });
-pgAdd(8, { subtitle: 'The Bouncing Hills', place: 'Mind the springs', description: 'Rolling hills of coloured turf, every one of them slightly too bouncy. The sky is candy and the clouds are cotton.',
-  intro: 'Wind two music boxes and reach the little white house on the far hill.', ...DAY(0x80c0f4, 0xfbd8e8),
-  gen: () => makeOpenGen('hills'), ambience: 'field', surface: () => 'grass',
-  stages: [{ text: 'Wind up the music boxes', goal: 'musicbox', count: 2, dist: [24, 50] }, { text: 'Reach the little white house', goal: 'cabin', dist: [44, 62], from: 'prev', final: true }],
-  entities: [['pg_mascot', 1], ['partygoer', 2]], rare: [['puppet', 0.4]], cls: 'Class 2' });
-pgAdd(9, { subtitle: 'Splash Plaza', place: 'Knee-deep fun', description: 'A flooded plaza of fountains, lazy rivers and plastic palm trees. The water is warm and moving a little.',
-  intro: 'Open three fountain valves, then pick a slide. Only one in four slides lets you live. The lifeguard is not a lifeguard.', ...SPLASH,
-  current: { power: 1.0, rate: 0.3, dir: 0.5, swirl: 1.2 },
-  gen: lit('wall_tile_green', 'pool_tile', [0.9, 1, 1], { props: 'pool', flood: 0.34, waterMat: 'water', featureWeights: { pool: 2, glass: 0, collapse: 0, exit: 0.2, blackout: 0 } }),
-  stages: [{ text: 'Open the fountain valves', goal: 'valve', count: 3, dist: [20, 44] }, slides(4, { from: 'prev', final: true })],
-  entities: [['pg_lifeguard', 2]], rare: [['mut_drowned', 0.2]], puzzle: true });
-pgAdd(10, { subtitle: 'The Escalator Atrium', place: 'Going up', description: 'Six storeys of mall atrium with escalators running in every direction, all of them moving, none of them stopping at the right place.',
-  intro: 'Take the stairwells up out of the atrium. There are six. Do not wait on the escalators.', ...BRIGHT,
-  gen: lit('stucco', 'terrazzo', [1, 0.96, 0.88], { height: 5.4, props: 'mall', density: [0.06, 0.2], pillarChance: 0.7 }),
-  stages: stairs(6, 'Take the stairwell up', [30, 48]), entities: [['mannequin', 3], ['partygoer', 1]], rare: [['pg_attendant', 0.4]] });
-pgAdd(11, { subtitle: 'The Mirror Maze', place: 'Which one is you', description: 'Corridors of mirrors, each reflecting a slightly different corridor. Your reflection is a little behind.',
-  intro: 'Throw three breakers in the maze and leave by the exit door. Do not trust a reflection that moves first.', ...BRIGHT,
-  gen: lit('mirror', 'party_carpet', [0.9, 0.95, 1], { height: 2.8, density: [0.3, 0.6], props: 'theater' }),
-  stages: [{ text: 'Throw the maze breakers', goal: 'breaker', count: 3, dist: [20, 44] }, { text: 'Find the exit door', goal: 'door_exit', dist: [38, 56], from: 'prev', final: true }],
-  entities: [['pg_attendant', 2], ['faceling', 2]], rare: [['mannequin', 0.4]], cls: 'Class 4' });
-pgAdd(12, { subtitle: 'The Rollercoaster Catwalks', place: 'Lift hill', description: 'A ride\'s service walkways hung in blue sky, rails going everywhere, a track with no train on it.',
-  intro: 'Start the two lift motors on the platforms, then find the station hatch. The wind is not part of the ride.', outdoor: true, fall: true, ambience: 'field', surface: () => 'carpet',
-  ambientLight: [0.34, 0.36, 0.4], bounce: 0.3, lightRange: 18, fog: { color: 0xcfe0f2, density: 0.018 }, tuning: { grimeScale: 0.2, wetScale: 0.3 },
-  sky: { top: 0x5a9ae8, horizon: 0xd8e8f8, glow: 0x000000, stars: 0, moon: false, clouds: 0.9 },
-  gen: () => makeOpenGen('heights', { style: 'sky' }),
-  stages: [{ text: 'Start the lift motors', goal: 'generator', count: 2, dist: [20, 48] }, { text: 'Find the station hatch', goal: 'hatch', dist: [40, 60], final: true }],
-  entities: [['updraft', 2]], rare: [['pg_mascot', 0.2]], cls: 'Class 4' });
-pgAdd(13, { subtitle: 'The Go-Kart Garage', place: 'Please fasten your helmet', description: 'A car park of bumper cars and painted lines. Every kart has been run into every other kart.',
-  intro: 'Reset the two ticket machines and leave by the exit booth. The karts do not move. Not while you are looking.', ...DAY(0xf0b070, 0xf8d8a8),
-  gen: () => makeOpenGen('lot'), ambience: 'city', surface: () => 'carpet',
-  stages: [{ text: 'Reset the ticket machines', goal: 'breaker', count: 2, dist: [24, 52] }, { text: 'Reach the exit booth', goal: 'door_exit', dist: [44, 64], final: true }],
-  entities: [['pg_attendant', 2], ['hound', 1]], rare: [['pg_bouncer', 0.3]], cls: 'Class 3' });
-pgAdd(14, { subtitle: 'The Wave Pool', place: 'Waves every ten minutes', description: 'A sea of turquoise water under a plastic sky, a fake beach, a fake horizon. The waves are real.',
-  intro: 'Restart the two pump generators, then reach the drain hatch. The slides at the far end all lead to the same drain. Only one does so safely.', ...SPLASH,
-  outdoor: true, current: { power: 1.3, rate: 0.28, dir: 0.0, swirl: 0.8 }, sky: { top: 0x60b0f0, horizon: 0xd8f0f8, stars: 0, moon: false, clouds: 0.4 },
-  ambientLight: [0.3, 0.34, 0.36], fog: { color: 0xbfe6f0, density: 0.026 }, gen: () => makeOpenGen('ocean'),
-  stages: [{ text: 'Restart the pump generators', goal: 'generator', count: 2, dist: [24, 50] }, slides(4, { from: 'prev', dist: [18, 30], final: true })],
-  entities: [['pg_lifeguard', 2]], rare: [['mut_drowned', 0.3]], puzzle: true });
-pgAdd(15, { subtitle: 'The Cake Hall', place: 'Happy birthday', description: 'Frosting-pink walls, sponge-cake floors and a candle on every table. It all smells wrong in a very sweet way.',
-  intro: 'Blow out the three birthday cakes and take the service stairs. The guests will notice.', ...BRIGHT,
-  gen: lit('party_wall', 'cake_sponge', [1, 0.9, 0.8], { props: 'party' }),
-  stages: [{ text: 'Blow out the cakes', goal: 'cake', count: 3, dist: [22, 48] }, { text: 'Take the service stairs', goal: 'stairs', dist: [40, 58], from: 'prev', final: true }],
-  entities: [['partygoer', 4], ['pg_ringmaster', 1]], rare: [['smiler', 0.3]], cls: 'Class 4' });
-pgAdd(16, { subtitle: 'The Great Staircase', place: 'Twelve flights', description: 'A tower of stairwells stacked like candy canes. Every door onto a landing opens onto another corridor, and another stairwell.',
-  intro: 'Twelve stairwells. Things join you partway up. Do not stop to count.', ...BRIGHT,
-  gen: lit('metal_red', 'rubber_floor', [1, 0.9, 0.8], { height: 2.7, props: 'industrial' }),
-  stages: stairs(12, 'Take the stairwell', [30, 46], { 3: ['spawn', 'pg_attendant', 1], 7: ['spawn', 'pg_bouncer', 1] }, 4.2),
-  entities: [['partygoer', 2], ['pg_attendant', 2], ['hound', 1]], rare: [['pg_mascot', 0.3]], cls: 'Class 4' });
-pgAdd(17, { subtitle: 'The Trampoline Park', place: 'No flips', description: 'Wall-to-wall trampolines under a roof of coloured nets, the whole floor humming with every jump that ever happened on it.',
-  intro: 'Throw three breakers and take the ride exit. The jumping you hear is not you.', ...BRIGHT,
-  gen: lit('plastic_orange', 'rubber_floor', [1, 0.9, 0.7], { height: 4.2, density: [0.08, 0.26], pillarChance: 0.6 }),
-  stages: [{ text: 'Throw the arena breakers', goal: 'breaker', count: 3, dist: [20, 46] }, { text: 'Take the ride exit', goal: 'door_exit', dist: [38, 56], from: 'prev', final: true }],
-  entities: [['pg_bouncer', 2], ['partygoer', 2]], rare: [['crawler', 0.3]], cls: 'Class 4' });
-pgAdd(18, { subtitle: 'Slide Alley', place: 'Three towers, twelve chutes', description: 'Three slide towers one after another, each with four chutes and a smiling sign. The sign is the only thing that tells the truth.',
-  intro: 'Climb each tower and choose a slide. Three picks, one in four each time. Nobody has ever done this on a first try.', ...SPLASH,
-  gen: lit('wall_tile', 'pool_tile_blue', [0.9, 1, 1], { props: 'pool', flood: 0.2, waterMat: 'water' }),
-  stages: [tickets(3), slides(4, { from: 'prev', text: 'Pick a slide: Tower 1', effects: [['message', 'Tower 2 is next door.']] }), slides(4, { from: 'prev', text: 'Pick a slide: Tower 2', effects: [['message', 'Tower 3.']] }), slides(4, { from: 'prev', text: 'Pick a slide: Tower 3', final: true })],
-  entities: [['pg_lifeguard', 2]], rare: [], puzzle: true, cls: 'Class 5' });
-pgAdd(19, { subtitle: 'The Ghost Train', place: 'Through the tunnel', description: 'A dark ride where the cars have been taken away. The painted ghosts on the walls are done in glow paint and one of them moves.',
-  intro: 'Find three tunnel fuses, reset the ride panel, then follow the rails out. Do not follow the one that moves.', fog: { color: 0x120816, density: 0.04 }, ambientLight: [0.012, 0.01, 0.02], bounce: 0.3, lightRange: 14, hum: 0.05,
-  gen: lit('red_room', 'carpet_red', [1, 0.4, 0.4], { height: 2.7, fixtureIntensity: 2.8, darkZones: 0.4, deadChance: 0.15, density: [0.3, 0.6], props: 'red' }),
-  stages: [{ text: 'Find the tunnel fuses', item: 'fuse', count: 3, dist: [20, 46] }, { text: 'Reset the ride panel', goal: 'breaker', dist: [28, 44], from: 'prev' }, { text: 'Follow the rails out', goal: 'door_exit', dist: [40, 58], from: 'prev', final: true }],
-  entities: [['smiler', 3], ['pg_attendant', 1]], rare: [['whisperer', 0.4]], cls: 'Class 5' });
-pgAdd(20, { subtitle: 'The Sky Tram', place: 'Mind the gap', description: 'Cable-car stations joined by catwalks over a bright nothing. The tram is long gone. The cables hum.',
-  intro: 'Throw the two station breakers, then reach the maintenance hatch. Crouch when the wind rises.', outdoor: true, fall: true, ambience: 'field', surface: () => 'carpet',
-  ambientLight: [0.36, 0.34, 0.38], bounce: 0.3, lightRange: 18, fog: { color: 0xf0d8e8, density: 0.02 }, tuning: { grimeScale: 0.2, wetScale: 0.3 },
-  sky: { top: 0xe08ad0, horizon: 0xfbe0d0, glow: 0x000000, stars: 0, moon: false, clouds: 0.9 },
-  gen: () => makeOpenGen('heights', { style: 'sky' }),
-  stages: [{ text: 'Throw the station breakers', goal: 'breaker', count: 2, dist: [20, 48] }, { text: 'Reach the maintenance hatch', goal: 'hatch', dist: [40, 60], final: true }],
-  entities: [['updraft', 3]], rare: [], cls: 'Class 4' });
-pgAdd(21, { subtitle: 'The Fun House', place: 'Walls that lean', description: 'Glass boxes, crooked rooms and corridors that are shorter on the way out. Distorting mirrors in every doorway.',
-  intro: 'Find the two fun house keys in the glass rooms and take the stairs. The glass is thinner than it looks.', ...BRIGHT,
-  gen: lit('party_wall', 'party_carpet', [1, 0.9, 1], { props: 'theater', featureWeights: { pool: 0, glass: 3, collapse: 0, exit: 0.4, blackout: 0 } }),
-  stages: [{ text: 'Find the fun house keys', item: 'ticket', count: 2, dist: [20, 44] }, { text: 'Take the stairs out', goal: 'stairs', dist: [36, 54], from: 'prev', final: true }],
-  entities: [['pg_ringmaster', 1], ['jester', 1], ['partygoer', 2]], rare: [['faceling', 0.5]], cls: 'Class 4' });
-pgAdd(22, { subtitle: 'The Candy Forest', place: 'Sugar and sap', description: 'A forest of round trees in pink and mint and lemon, in a light the colour of cream soda. Every trunk has a face carved in it.',
-  intro: 'Light four lanterns and find the gingerbread cabin. Do not eat anything.', ambience: 'forest', ambientLight: [0.18, 0.15, 0.17], bounce: 0.3, lightRange: 17,
-  fog: { color: 0xf0c0d8, density: 0.03 }, tuning: { grimeScale: 0.1, wetScale: 0.3 },
-  gen: () => makeForestGen({ treeChance: 0.14, leaves: 'none', floorMat: 'forest_floor' }),
-  stages: [{ text: 'Light the lanterns', goal: 'lantern', count: 4, dist: [24, 56] }, { text: 'Find the gingerbread cabin', goal: 'cabin', dist: [56, 76], final: true }],
-  entities: [['partygoer', 2], ['pg_mascot', 1]], rare: [['rootwalker', 0.4]], cls: 'Class 3' });
-pgAdd(23, { subtitle: 'The Elevator Atrium', place: 'Doors closing', description: 'A tower lobby of glass lifts, each one stopping at the wrong place and each one with a bright little jingle.',
-  intro: 'Call three lifts to unlock the shaft, then take the freight elevator down.', ...BRIGHT,
-  gen: lit('wallpaper_blue', 'marble_floor', [1, 0.96, 0.9], { height: 4.0, props: 'mall', density: [0.1, 0.3] }),
-  stages: [{ text: 'Call the lifts', goal: 'elevator', count: 3, dist: [22, 48] }, { text: 'Take the freight elevator down', goal: 'elevator', dist: [40, 58], from: 'prev', final: true }],
-  entities: [['pg_attendant', 2], ['partygoer', 1]], rare: [['pg_mascot', 0.4]], cls: 'Class 3' });
-pgAdd(24, { subtitle: 'The Log Flume', place: 'Hold on', description: 'Channels of fast brown water between fibreglass logs and rock, with a conveyor of empty boats going the wrong way.',
-  intro: 'Open the three flume gates and then choose a boat chute. The current is strong. Only one chute ends in a pool.', ...SPLASH,
-  current: { power: 2.2, rate: 0.3, dir: 1.4, swirl: 0.7 },
-  gen: lit('wall_tile_green', 'pool_tile_blue', [0.95, 1, 0.9], { props: 'pool', flood: 0.4, waterMat: 'water', featureWeights: { pool: 2, glass: 0, collapse: 0, exit: 0.2, blackout: 0 } }),
-  stages: [{ text: 'Open the flume gates', goal: 'valve', count: 3, dist: [20, 44] }, slides(4, { from: 'prev', final: true })],
-  entities: [['pg_lifeguard', 2], ['wretch', 1]], rare: [['mut_drowned', 0.3]], puzzle: true, cls: 'Class 4' });
-pgAdd(25, { subtitle: 'The Parade Route', place: 'Streets of confetti', description: 'Bunting from every window, floats parked end to end, the street one long ribbon of paper. The crowd has gone to the rooftops.',
-  intro: 'Throw the two float breakers and take the subway stairs. Everyone on the rooftops is waving.', ...DAY(0xf09870, 0xf8d0b0),
-  gen: () => makeOpenGen('city'), ambience: 'city', surface: () => 'carpet',
-  stages: [{ text: 'Throw the float breakers', goal: 'breaker', count: 2, dist: [24, 52] }, { text: 'Find the subway stairs', goal: 'stairs', dist: [46, 66], final: true }],
-  entities: [['pg_mascot', 1], ['partygoer', 3]], rare: [['pg_ringmaster', 0.4]], cls: 'Class 3' });
-pgAdd(26, { subtitle: 'The Winter Slide', place: 'Snow and sprinkles', description: 'An ice-slide park under artificial snow, with a lodge at the bottom that is lit and warm and has never had a single guest.',
-  intro: 'Restart two heaters, then choose a slide. One in four ends in a snowbank. The others end.', ambientLight: [0.1, 0.12, 0.15], bounce: 0.4, lightRange: 18, fog: { color: 0xd0dcec, density: 0.03 }, tuning: { grimeScale: 0.1, wetScale: 0.5 }, hum: 0.02,
-  gen: lit('ice_wall', 'snow', [0.85, 0.92, 1], { props: 'industrial' }),
-  stages: [{ text: 'Restart the heaters', goal: 'generator', count: 2, dist: [22, 46] }, slides(4, { from: 'prev', final: true })],
-  entities: [['pg_mascot', 1], ['hound', 2]], rare: [['frostbitten', 0.4]], puzzle: true, cls: 'Class 4' });
-pgAdd(27, { subtitle: 'Stairs to the Moon', place: 'Sixteen flights', description: 'A stairwell tower that goes on past any building: sixteen doors, sixteen landings and a sky that gets darker every floor.',
-  intro: 'Sixteen stairwells. Do not look down. Do not look up either.', ...BRIGHT, fog: { color: 0x8a90c0, density: 0.022 }, ambientLight: [0.08, 0.08, 0.14],
-  gen: lit('metal_blue', 'rubber_floor', [0.8, 0.85, 1], { height: 2.7, props: 'industrial' }),
-  stages: stairs(16, 'Take the stairwell', [30, 48], { 2: ['spawn', 'pg_attendant', 1], 6: ['spawn', 'pg_bouncer', 1], 10: ['spawn', 'pg_lifeguard', 1], 13: ['spawn', 'pg_mascot', 1] }, 5.1),
-  entities: [['partygoer', 2], ['pg_attendant', 1]], rare: [['pg_ringmaster', 0.4]], cls: 'Class 5' });
-pgAdd(28, { subtitle: 'The Grand Finale Slides', place: 'The big one', description: 'The tallest tower in the park, with a single wide landing of eight chutes, as long as bridges, in every colour that exists.',
-  intro: 'Two picks, four chutes each. Hold your breath. The park saved its best one for last.', ...SPLASH,
-  current: { power: 1.0, rate: 0.3, dir: 2.0, swirl: 1.3 },
-  gen: lit('wall_tile', 'pool_tile_blue', [1, 0.95, 0.9], { props: 'pool', flood: 0.3, waterMat: 'water' }),
-  stages: [tickets(4, 'Find four golden tickets'), slides(4, { from: 'prev', text: 'Pick the first slide', rideTime: 10, effects: [['message', 'You survived the first. There is a second.']] }), slides(4, { from: 'prev', text: 'Pick the last slide', rideTime: 12, final: true })],
-  entities: [['pg_lifeguard', 2], ['pg_mascot', 1]], rare: [['mut_drowned', 0.3]], puzzle: true, cls: 'Class 5' });
-pgAdd(29, { subtitle: 'Backstage', place: 'Staff only', description: 'The park as it looks with the lights off: concrete corridors, cable runs, costume racks and a hundred heads on a hundred pegs.',
-  intro: 'Throw three backstage breakers and leave by the loading dock. Nothing here is dressed for the party.', fog: { color: 0x14100c, density: 0.04 }, ambientLight: [0.016, 0.014, 0.012], bounce: 0.3, lightRange: 15, hum: 0.07,
-  gen: lobby({ height: 3.2, wallMat: 'concrete_painted', floorMat: 'concrete_floor', ceilMat: 'ceiling_dirty', fixtureMat: 'fixture_cold', frameMat: 'metal_grey', fixtureColor: [0.88, 0.94, 1], fixtureIntensity: 3.0,
-    density: [0.25, 0.55], roomChance: 0.4, deadChance: 0.12, flickerChance: 0.1, darkZones: 0.3, featureWeights: { pool: 0.2, glass: 0.4, collapse: 0.4, exit: 0.8, blackout: 1.2 }, props: 'industrial' }),
-  stages: [{ text: 'Throw the backstage breakers', goal: 'breaker', count: 3, dist: [22, 50] }, { text: 'Raise the loading dock gate', goal: 'door_shutter', dist: [44, 62], from: 'prev', final: true }],
-  entities: [['pg_mascot', 1], ['pg_attendant', 2], ['mannequin', 3], ['smiler', 2]], rare: [['pg_ringmaster', 0.4], ['stature', 0.3]], cls: 'Class 5' });
-pgAdd(30, { subtitle: 'The Park Exit', place: 'Please come again', description: 'The last midway: lights, music, every ride you have been on running all at once. The exit is at the end of the main street.',
-  intro: 'Everything that lives in the park is on the main street. Reach THE EXIT. The gift shop does not count.', ...BRIGHT, hum: 0.02,
-  gen: lit('party_wall', 'party_carpet', [1, 0.88, 0.9], { height: 3.6, density: [0.12, 0.34], pillarChance: 0.5 }),
-  stages: [{ text: 'Throw the main street breakers', goal: 'breaker', count: 3, dist: [22, 50], effects: [['powercut', 50, 6], ['spawn', 'pg_ringmaster', 1]] }, { text: 'Reach THE EXIT', goal: 'door_final', dist: [46, 62], from: 'prev', final: true, revert: true }],
-  entities: [['partygoer', 3], ['pg_lifeguard', 1], ['pg_attendant', 2], ['pg_bouncer', 1], ['pg_mascot', 1]], rare: [['pg_ringmaster', 0.5]], cls: 'Class 5' });
-
-LEVELS.push(...CORR, ...PG);
+const { PACKS: PACKS, packById: packById } = __mod['src/levels/index.js'];
+// PACK METADATA (id, name, tab, blurb, win text, ...) lives with the levels, in
+// levels/packs.js, next to the folder and the file list of each pack. This
+// module just re-exports it for the start screen, the pack dock and the
+// loading-screen photographs, which have always imported it from here.
 
 __e['PACKS'] = PACKS;
 __e['packById'] = packById;
-__e['CORRUPTION_LEVELS'] = CORR;
-__e['PLAYGROUND_LEVELS'] = PG;
+
   return __e;
 })();
 __mod['src/game/upgrades.js'] = (function () {
@@ -22411,7 +20813,9 @@ class Ride {
     game.scene.add(this.group);
     this.segs = []; this.rings = [];
     const cyl = new THREE.CylinderGeometry(1.4, 1.4, 3.0, 16, 1, true), tor = new THREE.TorusGeometry(1.4, 0.07, 6, 24);
-    this.mats = [0, 1].map(() => new THREE.MeshBasicMaterial({ color: 0x66ccff, transparent: true, opacity: 0.88, side: THREE.DoubleSide, depthWrite: false, fog: false }));
+    // the tube you ride down is moulded plastic in the slide's own colour: opaque, with
+    // a faint sheen on every other segment and on the rings between them (see goals.js)
+    this.mats = [0, 1].map(() => new THREE.MeshBasicMaterial({ color: 0x66ccff, side: THREE.DoubleSide, fog: false }));
     this.ringMat = new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false });
     for (let i = 0; i < 34; i++) {
       const m = new THREE.Mesh(cyl, this.mats[i & 1]); m.frustumCulled = false; this.group.add(m); this.segs.push(m);
@@ -22428,9 +20832,10 @@ class Ride {
     this.T = Math.max(5, secs);                       // seconds in the tube
     this.tA = 1.0 + this.len * 0.14;                  // seconds on the chute
     this.t = 0; this.phase = 'chute'; this.whoosh = 0;
-    const hex = [0xaab4c0, 0xff5a4a, 0x4aa8ff, 0xffd23a, 0x5aff8a, 0xff9a3a][(goal.opts.hue || 0) % 6];
-    this.mats[0].color.setHex(hex); this.mats[1].color.setHex(hex).lerp(new THREE.Color(0xffffff), 0.45);
-    this.ringMat.color.setHex(hex).lerp(new THREE.Color(0xffffff), 0.6);
+    // the six slide plastics, in the same order as SLIDE_PLASTIC in goals.js
+    const hex = [0xb3b9c4, 0xdb4034, 0x3d8ee0, 0xe8c22a, 0x3fc468, 0xe07c26][(goal.opts.hue || 0) % 6];
+    this.mats[0].color.setHex(hex); this.mats[1].color.setHex(hex).lerp(new THREE.Color(0xffffff), 0.18);
+    this.ringMat.color.setHex(hex).lerp(new THREE.Color(0xffffff), 0.42);
     this.game.hud.ride(true, this.tA + this.T + 2);
     this.game.audio.door('hatch');
     goal.group.updateMatrixWorld(true);

@@ -1,0 +1,407 @@
+{
+ "cor02": [
+  {
+   "kind": "crevice",
+   "axis": "z",
+   "mid": 8,
+   "length": 60,
+   "offset": 26,
+   "runs": 1,
+   "spacing": 16,
+   "width": 1.1,
+   "wobble": 8
+  }
+ ],
+ "cor05": [
+  {
+   "kind": "crevice",
+   "axis": "x",
+   "mid": 8,
+   "length": 60,
+   "offset": 20,
+   "runs": 2,
+   "spacing": 18,
+   "width": 1.0,
+   "wobble": 8
+  }
+ ],
+ "cor07": [
+  {
+   "kind": "block",
+   "x": -20,
+   "z": -14,
+   "w": 12,
+   "h": 14,
+   "shards": 0.2
+  },
+  {
+   "kind": "block",
+   "x": 20,
+   "z": -14,
+   "w": 10,
+   "h": 10,
+   "shards": 0.16
+  },
+  {
+   "kind": "block",
+   "x": 18,
+   "z": 16,
+   "w": 8,
+   "h": 12,
+   "shards": 0.14
+  }
+ ],
+ "cor12": [
+  {
+   "kind": "block",
+   "x": -18,
+   "z": 14,
+   "w": 13,
+   "h": 13,
+   "shards": 0.24
+  }
+ ],
+ "cor19": [
+  {
+   "kind": "crevice",
+   "axis": "x",
+   "mid": 8,
+   "length": 54,
+   "offset": 22,
+   "runs": 2,
+   "spacing": 17,
+   "width": 1.0,
+   "wobble": 8
+  }
+ ],
+ "cor21": [
+  {
+   "kind": "crevice",
+   "axis": "x",
+   "mid": 8,
+   "length": 76,
+   "offset": -20,
+   "runs": 3,
+   "spacing": 19,
+   "width": 1.3,
+   "wobble": 11
+  },
+  {
+   "kind": "block",
+   "x": 20,
+   "z": -12,
+   "w": 9,
+   "h": 9,
+   "shards": 0.18
+  }
+ ],
+ "cor28": [
+  {
+   "kind": "canyon",
+   "axis": "z",
+   "mid": 8,
+   "length": 70,
+   "offset": 26,
+   "width": 6,
+   "wobble": 10,
+   "bridges": 2,
+   "bridgeSpan": 5,
+   "jag": 4
+  },
+  {
+   "kind": "block",
+   "x": 20,
+   "z": -14,
+   "w": 10,
+   "h": 10,
+   "shards": 0.2
+  },
+  {
+   "kind": "crevice",
+   "axis": "x",
+   "mid": 8,
+   "length": 60,
+   "offset": 18,
+   "runs": 2,
+   "spacing": 20,
+   "width": 1.2,
+   "wobble": 10
+  }
+ ],
+ "cor30": [
+  {
+   "kind": "crevice",
+   "axis": "x",
+   "mid": 8,
+   "length": 80,
+   "offset": -24,
+   "runs": 3,
+   "spacing": 13,
+   "width": 1.3,
+   "wobble": 11
+  },
+  {
+   "kind": "block",
+   "x": 22,
+   "z": 20,
+   "w": 10,
+   "h": 10,
+   "shards": 0.16
+  },
+  {
+   "kind": "canyon",
+   "axis": "z",
+   "mid": 8,
+   "length": 56,
+   "offset": -26,
+   "width": 5,
+   "wobble": 10,
+   "bridges": 3,
+   "bridgeSpan": 4,
+   "jag": 3
+  }
+ ],
+ "cor01": [
+  {
+   "kind": "block",
+   "x": 18,
+   "z": -12,
+   "w": 9,
+   "h": 12,
+   "shards": 0.14
+  },
+  {
+   "kind": "block",
+   "x": -16,
+   "z": 6,
+   "w": 8,
+   "h": 10,
+   "shards": 0.1
+  }
+ ],
+ "cor03": [
+  {
+   "kind": "crevice",
+   "axis": "x",
+   "mid": 8,
+   "length": 70,
+   "offset": 18,
+   "runs": 2,
+   "spacing": 16,
+   "width": 1.0,
+   "wobble": 9
+  },
+  {
+   "kind": "block",
+   "x": -16,
+   "z": 18,
+   "w": 8,
+   "h": 10,
+   "shards": 0.08
+  }
+ ],
+ "cor04": [
+  {
+   "kind": "block",
+   "x": -14,
+   "z": -6,
+   "w": 10,
+   "h": 9,
+   "shards": 0.12
+  },
+  {
+   "kind": "crevice",
+   "axis": "x",
+   "mid": 8,
+   "length": 56,
+   "offset": -24,
+   "runs": 2,
+   "spacing": 20,
+   "width": 0.9,
+   "wobble": 8
+  }
+ ],
+ "cor08": [
+  {
+   "kind": "crevice",
+   "axis": "x",
+   "mid": 8,
+   "length": 80,
+   "offset": -20,
+   "runs": 3,
+   "spacing": 9,
+   "width": 1.4,
+   "wobble": 10
+  },
+  {
+   "kind": "block",
+   "x": 20,
+   "z": 18,
+   "w": 8,
+   "h": 8,
+   "shards": 0.1
+  }
+ ],
+ "cor10": [
+  {
+   "kind": "crevice",
+   "axis": "x",
+   "mid": 8,
+   "length": 64,
+   "offset": -20,
+   "runs": 3,
+   "spacing": 18,
+   "width": 1.2,
+   "wobble": 9
+  },
+  {
+   "kind": "block",
+   "x": -14,
+   "z": 14,
+   "w": 8,
+   "h": 10,
+   "shards": 0.1
+  }
+ ],
+ "cor14": [
+  {
+   "kind": "block",
+   "x": -14,
+   "z": -16,
+   "w": 10,
+   "h": 11,
+   "shards": 0.2
+  },
+  {
+   "kind": "block",
+   "x": -14,
+   "z": -2,
+   "w": 10,
+   "h": 11,
+   "shards": 0.2
+  },
+  {
+   "kind": "block",
+   "x": -14,
+   "z": 12,
+   "w": 10,
+   "h": 11,
+   "shards": 0.2
+  },
+  {
+   "kind": "crevice",
+   "axis": "z",
+   "mid": 8,
+   "length": 50,
+   "offset": 24,
+   "runs": 2,
+   "spacing": 16,
+   "width": 1.0,
+   "wobble": 8
+  }
+ ],
+ "cor22": [
+  {
+   "kind": "canyon",
+   "axis": "x",
+   "mid": 8,
+   "length": 72,
+   "offset": 22,
+   "width": 5,
+   "wobble": 10,
+   "bridges": 3,
+   "bridgeSpan": 4,
+   "jag": 3
+  },
+  {
+   "kind": "crevice",
+   "axis": "z",
+   "mid": 8,
+   "length": 52,
+   "offset": -24,
+   "runs": 2,
+   "spacing": 18,
+   "width": 1.1,
+   "wobble": 8
+  }
+ ],
+ "cor25": [
+  {
+   "kind": "block",
+   "x": -14,
+   "z": -16,
+   "w": 9,
+   "h": 11,
+   "shards": 0.14
+  },
+  {
+   "kind": "block",
+   "x": -14,
+   "z": -2,
+   "w": 9,
+   "h": 11,
+   "shards": 0.14
+  },
+  {
+   "kind": "block",
+   "x": -14,
+   "z": 12,
+   "w": 9,
+   "h": 11,
+   "shards": 0.14
+  },
+  {
+   "kind": "crevice",
+   "axis": "z",
+   "mid": 8,
+   "length": 56,
+   "offset": 22,
+   "runs": 3,
+   "spacing": 15,
+   "width": 1.0,
+   "wobble": 9
+  }
+ ],
+ "cor27": [
+  {
+   "kind": "crevice",
+   "axis": "x",
+   "mid": 8,
+   "length": 70,
+   "offset": -18,
+   "runs": 3,
+   "spacing": 16,
+   "width": 1.2,
+   "wobble": 9
+  },
+  {
+   "kind": "block",
+   "x": 20,
+   "z": -10,
+   "w": 9,
+   "h": 11,
+   "shards": 0.16
+  }
+ ],
+ "cor29": [
+  {
+   "kind": "block",
+   "x": -16,
+   "z": -12,
+   "w": 10,
+   "h": 12,
+   "shards": 0.12
+  },
+  {
+   "kind": "crevice",
+   "axis": "x",
+   "mid": 8,
+   "length": 60,
+   "offset": 18,
+   "runs": 2,
+   "spacing": 22,
+   "width": 1.0,
+   "wobble": 9
+  }
+ ]
+}

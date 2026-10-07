@@ -1,0 +1,200 @@
+{
+ "pg02": {
+  "intro": "Three party breakers have tripped. Flip them back, then take the stairwell up to the midway. Balloons will not hurt you. The people holding them might.",
+  "stagesKeep": 1,
+  "stagesAdd": [
+   {
+    "text": "Take the stairwell to the midway",
+    "goal": "stairshaft",
+    "flights": 6,
+    "rise": 2.8,
+    "dist": [
+     40,
+     60
+    ],
+    "final": true
+   }
+  ]
+ },
+ "pg05": {
+  "description": "A narrow stairwell the colour of boiled sweets, climbing eight floors in a single shaft. Every flight turns back on itself, and the door at the top is the only way out.",
+  "intro": "One narrow stairwell between you and the top, eight flights of it. It turns back on itself on every landing. Keep moving.",
+  "genParams": {
+   "height": 3.0,
+   "density": [
+    0.34,
+    0.62
+   ],
+   "roomChance": 0.2,
+   "doorwayChance": 0.16
+  },
+  "stagesKeep": 0,
+  "stagesAdd": [
+   {
+    "text": "Climb the shaft to the top",
+    "goal": "stairshaft",
+    "flights": 8,
+    "rise": 2.8,
+    "dist": [
+     30,
+     46
+    ],
+    "final": true
+   }
+  ]
+ },
+ "pg10": {
+  "description": "Six storeys of mall atrium whose escalators all stop at the wrong floor. The only way up is the stairwell in the service core: one narrow shaft, six flights.",
+  "intro": "The escalators are stopping at the wrong floors. Take the stairwell: one shaft, six flights to the top of the atrium.",
+  "stagesKeep": 0,
+  "stagesAdd": [
+   {
+    "text": "Take the stairwell to the sixth floor",
+    "goal": "stairshaft",
+    "flights": 6,
+    "rise": 3.0,
+    "dist": [
+     30,
+     48
+    ],
+    "final": true
+   }
+  ]
+ },
+ "pg15": {
+  "intro": "Blow out the three birthday cakes and take the service stairwell up. The guests will notice.",
+  "stagesKeep": 1,
+  "stagesAdd": [
+   {
+    "text": "Take the service stairwell up",
+    "goal": "stairshaft",
+    "flights": 5,
+    "rise": 2.8,
+    "dist": [
+     40,
+     58
+    ],
+    "from": "prev",
+    "final": true
+   }
+  ]
+ },
+ "pg16": {
+  "description": "One great stairwell in candy-cane stripes: twelve flights in a single narrow shaft, turning back on itself all the way to the top. There is nothing else in the tower.",
+  "intro": "One narrow shaft, twelve flights, and things that join you partway up. Do not stop to count the floors.",
+  "genParams": {
+   "density": [
+    0.32,
+    0.6
+   ],
+   "roomChance": 0.18,
+   "doorwayChance": 0.16
+  },
+  "entities": [
+   [
+    "partygoer",
+    2
+   ],
+   [
+    "pg_attendant",
+    2
+   ],
+   [
+    "hound",
+    1
+   ],
+   [
+    "pg_mascot",
+    1
+   ]
+  ],
+  "stagesKeep": 0,
+  "stagesAdd": [
+   {
+    "text": "Climb the great stairwell to the top",
+    "goal": "stairshaft",
+    "flights": 12,
+    "rise": 2.8,
+    "dist": [
+     30,
+     46
+    ],
+    "final": true
+   }
+  ]
+ },
+ "pg21": {
+  "intro": "Find the two fun house keys in the glass rooms, then climb the stairwell out. The glass is thinner than it looks.",
+  "stagesKeep": 1,
+  "stagesAdd": [
+   {
+    "text": "Take the stairwell out",
+    "goal": "stairshaft",
+    "flights": 5,
+    "rise": 2.8,
+    "dist": [
+     36,
+     54
+    ],
+    "from": "prev",
+    "final": true
+   }
+  ]
+ },
+ "pg25": {
+  "intro": "Throw the two float breakers and take the subway stairwell up. Everyone on the rooftops is waving.",
+  "stagesKeep": 1,
+  "stagesAdd": [
+   {
+    "text": "Take the subway stairwell up",
+    "goal": "stairshaft",
+    "flights": 6,
+    "rise": 2.8,
+    "dist": [
+     46,
+     66
+    ],
+    "final": true
+   }
+  ]
+ },
+ "pg27": {
+  "description": "A stairwell tower that goes on past any building: one narrow shaft, sixteen flights, and no doors but the one at the top.",
+  "intro": "Sixteen flights in one narrow shaft, all the way to the top. Do not look down. Do not look up either.",
+  "genParams": {
+   "density": [
+    0.32,
+    0.6
+   ],
+   "roomChance": 0.18
+  },
+  "entities": [
+   [
+    "partygoer",
+    2
+   ],
+   [
+    "pg_attendant",
+    1
+   ],
+   [
+    "pg_lifeguard",
+    1
+   ]
+  ],
+  "stagesKeep": 0,
+  "stagesAdd": [
+   {
+    "text": "Climb the shaft to the top",
+    "goal": "stairshaft",
+    "flights": 16,
+    "rise": 2.8,
+    "dist": [
+     30,
+     48
+    ],
+    "final": true
+   }
+  ]
+ }
+}
