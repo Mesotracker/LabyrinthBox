@@ -131,6 +131,7 @@ It gives up quickly.</textarea>
         <option value="chase">chasing you</option>
       </select></div>
       <button type="button" id="reseed" style="flex:0 0 auto">New random bits</button>
+      <button type="button" id="rebuild" style="flex:0 0 auto">Rebuild</button>
       <span class="badge" id="readout">-</span>
     </div>
     <p class="hint">Drag to orbit, scroll to zoom. Creatures are built out of randomness, so "new random bits" gives a
@@ -145,6 +146,9 @@ It gives up quickly.</textarea>
         <pre id="line1">    'hall-thing.js',</pre></li>
       <li>Reload the game. The creature is in the level studio's "who is in it" list, so a level can spawn it.</li>
     </ol>
+    <div class="row" style="margin-top:8px">
+      <div style="flex:1 1 220px"><label>File name <span class="small">saved inside entities/</span></label><input type="text" id="filename" value="hall-thing"></div>
+    </div>
     <div class="row" style="margin-top:8px">
       <button type="button" id="dl">Download .js</button>
       <button type="button" id="copy">Copy the file</button>
