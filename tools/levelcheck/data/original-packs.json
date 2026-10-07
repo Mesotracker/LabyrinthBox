@@ -1,0 +1,48 @@
+[
+ {
+  "id": "main",
+  "name": "The Campaign",
+  "tab": "Campaign",
+  "builtin": true,
+  "blurb": "Thirty-one levels between you and the way out.",
+  "win": [
+   "YOU FOUND THE WAY OUT",
+   "LEVEL COMPLETE"
+  ]
+ },
+ {
+  "id": "phobia",
+  "name": "The Phobia Wing",
+  "tab": "Phobia Wing",
+  "size": "11.4 MB",
+  "blurb": "Forty-four fears, one creature each. Opens once Level 0 is escaped.",
+  "win": [
+   "YOU FACED EVERY FEAR",
+   "FEAR OVERCOME"
+  ]
+ },
+ {
+  "id": "corruption",
+  "name": "Corruption",
+  "tab": "Corruption",
+  "size": "8.7 MB",
+  "bonus": true,
+  "blurb": "Thirty of the original levels, left to rot for a thousand years. Cracked floors, rifts into the pale abyss, strong currents, and things that grew too many limbs.",
+  "win": [
+   "THE ROT LET YOU GO",
+   "ROT ESCAPED"
+  ]
+ },
+ {
+  "id": "playground",
+  "name": "Playground",
+  "tab": "Playground",
+  "size": "9.2 MB",
+  "bonus": true,
+  "blurb": "Thirty bright, loud places: waterslides where only one in four lets you live, towers of stairwells, and every ride the park ever built.",
+  "win": [
+   "THE PARK IS CLOSED",
+   "RIDE OVER"
+  ]
+ }
+]

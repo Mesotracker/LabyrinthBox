@@ -1,0 +1,110 @@
+// --------------------------------------------------------------------------
+// Δ-22 - The Poolrooms, Drowned  (id: cor22, Corruption)
+// The tiles are all under water and the water is going somewhere: it pours into a canyon in the floor while a crevice takes what is left. A strong, patient current moves through every hall.
+//
+// Scene: 24 generator settings, 1 entity groups, 0 rare spawns, loot keys 8/water 6/batteries 3, 2 cuts in the floor (canyon, crevice), file corruption 0.35
+//    1. Shut the pool valves in order  [valve x3]
+//    2. Find the stairwell door  [door_stairs (final)]
+//
+// One level per file: change anything here and reload the game. Field list:
+// levels/README.md  -  build levels without code: other/level-studio.html
+// --------------------------------------------------------------------------
+LabLevels.add('corrupt', {
+  id: 'cor22',
+  name: 'Δ-22',
+  subtitle: 'The Poolrooms, Drowned',
+  place: 'Level 37, the water rose',
+  cls: 'Class 2',
+  passive: false,
+  seed: 7902,
+  description: 'The tiles are all under water and the water is going somewhere: it pours into a canyon in the floor while a crevice takes what is left. A strong, patient current moves through every hall.',
+  intro: 'It is quiet. Read the maintenance log, shut the valves in order, then find the stairwell. The pools have joined into a river. The current is strong enough to take you out of a room.',
+  spawn: [16, 16],
+  wet: true,
+  wade: true,
+  fall: true,
+  puzzle: true,
+  ambience: 'water',
+  hum: 0.02,
+  ambientLight: [0.06425, 0.07675, 0.083],
+  bounce: 0.42,
+  lightRange: 22,
+  fog: { color: 0x99aeac, density: 0.02464 },
+  tuning: { grimeScale: 0.6, wetScale: 2.16 },
+  current: { power: 2.8, rate: 0.35, dir: 2.4, swirl: 1.1 },
+  corrupt: 0.35,
+  gen: {
+    type: 'lobby',
+    params: {
+      height: 4,
+      wallMat: 'wall_tile',
+      floorMat: 'pool_tile',
+      ceilMat: 'ceiling_white',
+      fixtureMat: 'fixture_cold',
+      frameMat: 'metal_white',
+      fixtureColor: [0.92, 0.98, 1],
+      fixtureIntensity: 4.2,
+      density: [0.08, 0.3],
+      roomChance: 0.2,
+      pillarChance: 0.6,
+      deadChance: 0.14,
+      flickerChance: 0.08,
+      strobeChance: 0,
+      dyingChance: 0.06,
+      darkZones: 0.24,
+      featureWeights: { pool: 4, glass: 0, collapse: 1.3, exit: 0.3, blackout: 0, leak: 2 },
+      props: 'pool',
+      flood: 0.46,
+      missingTileChance: 0.06,
+      overgrown: 0.4,
+      cracked: 0.7,
+      damp: 0.55,
+      cuts: [
+        {
+          kind: 'canyon',
+          axis: 'x',
+          mid: 8,
+          length: 72,
+          offset: 22,
+          width: 5,
+          wobble: 10,
+          bridges: 3,
+          bridgeSpan: 4,
+          jag: 3,
+        },
+        {
+          kind: 'crevice',
+          axis: 'z',
+          mid: 8,
+          length: 52,
+          offset: -24,
+          runs: 2,
+          spacing: 18,
+          width: 1.1,
+          wobble: 8,
+        },
+      ],
+    },
+  },
+  stages: [
+    {
+      text: 'Shut the pool valves in order',
+      hint: 'Read the maintenance log',
+      goal: 'valve',
+      count: 3,
+      order: ['blue', 'green', 'red'],
+      dist: [22, 48],
+      clueDist: [5, 14],
+      clueTitle: 'Maintenance log',
+    },
+    {
+      text: 'Find the stairwell door',
+      goal: 'door_stairs',
+      dist: [50, 70],
+      final: true,
+    },
+  ],
+  entities: [['mut_drowned', 2]],
+  rare: [],
+  loot: { keys: 8, water: 6, batteries: 3 },
+});
